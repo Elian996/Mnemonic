@@ -1,0 +1,21 @@
+node_modules
+.next
+dist
+coverage
+.env
+.env.local
+!.env.example
+playwright-report
+test-results
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
+__pycache__/
+*.pyc
+
+# Local generated data and working artifacts
+tmp/
+backups/
+public/uploads/
+data/ecdict.csv
+data/ecdict.full.csv

@@ -1,0 +1,2670 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  Check,
+  Circle,
+  Eye,
+  EyeOff,
+  Grid2X2,
+  ImagePlus,
+  Link2,
+  List,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  Star,
+  Volume2,
+  X
+} from "lucide-react";
+import type { MouseEvent, PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { MarkdownImageTextarea } from "@/components/markdown-image-textarea";
+import { WikiRichText } from "@/components/wiki-rich-text";
+import {
+  GUEST_PROGRESS_CHANGED_EVENT,
+  applyGuestProgressToWord,
+  applyGuestProgressToWords,
+  saveGuestWordMarkState,
+  saveGuestWordMarkStates
+} from "@/lib/guest-progress";
+import { cn } from "@/lib/utils";
+import {
+  WORD_MARK_SAVE_REQUEST_EVENT,
+  WORD_MARK_SAVE_STATE_EVENT,
+  type WordMarkSaveStateDetail,
+  type WordMarkSaveStatus
+} from "@/lib/word-mark-save-events";
+
+type MnemonicCardItem = {
+  id: string;
+  title: string;
+  splitText: string;
+  contentMarkdown: string;
+  contentHtml: string;
+  plainText: string;
+  sourceType: "OFFICIAL" | "USER_PRIVATE" | "USER_PUBLIC";
+  status: string;
+  canEdit: boolean;
+};
+
+export type LevelWordItem = {
+  id: string;
+  word: string;
+  slug: string;
+  phonetic: string;
+  audioUkUrl: string;
+  audioUsUrl: string;
+  partOfSpeech: string;
+  meaningCn: string;
+  shortMeaningCn: string;
+  exampleSentence: string;
+  exampleTranslation: string;
+  markState: WordMarkState | null;
+  isBookmarked: boolean;
+  mnemonic?: MnemonicCardItem | null;
+  mnemonics: MnemonicCardItem[];
+  canEditOfficialCards?: boolean;
+};
+
+type ViewMode = "grid" | "list";
+type SortMode = "random" | "az" | "za";
+type WordMarkState = "KNOWN" | "FUZZY" | "UNKNOWN";
+type MarkHistoryItem = {
+  wordId: string;
+  previousState: WordMarkState | null;
+  previousWord: LevelWordItem;
+  previousWasRoundReset: boolean;
+  previousWords: LevelWordItem[];
+};
+type DeletedMnemonicCard = {
+  card: MnemonicCardItem;
+  previousIndex: number;
+};
+type MnemonicCardDeleteUndoState = {
+  wordId: string;
+  canUndo: boolean;
+  restore: () => void | Promise<void>;
+};
+type WordNavigationDirection = "previous" | "next";
+
+const sortOptions: { value: SortMode; label: string }[] = [
+  { value: "random", label: "随机" },
+  { value: "az", label: "A-Z" },
+  { value: "za", label: "Z-A" }
+];
+
+export function LevelWordBrowser({
+  words,
+  sort,
+  basePath,
+  isAuthenticated,
+  defaultUserCardVisibility = "private",
+  canEditOfficialCards = false
+}: {
+  words: LevelWordItem[];
+  sort: SortMode;
+  basePath: string;
+  isAuthenticated: boolean;
+  defaultUserCardVisibility?: "private" | "public";
+  canEditOfficialCards?: boolean;
+}) {
+  const router = useRouter();
+  const [displayWords, setDisplayWords] = useState(() =>
+    prepareWordsForDisplay(words, isAuthenticated)
+  );
+  const [activeSort, setActiveSort] = useState(sort);
+  const [wordStates, setWordStates] = useState(() =>
+    markMapFromWords(wordsWithClientProgress(words, isAuthenticated))
+  );
+  const [pendingSaveCount, setPendingSaveCount] = useState(0);
+  const [saveStatus, setSaveStatus] = useState<WordMarkSaveStatus>("idle");
+  const [saveMessage, setSaveMessage] = useState("");
+  const [roundResetWordIds, setRoundResetWordIds] = useState<Set<string>>(() => new Set());
+  const [markHistory, setMarkHistory] = useState<MarkHistoryItem[]>([]);
+  const [showMeaning, setShowMeaning] = useState(false);
+  const [view, setView] = useState<ViewMode>("grid");
+  const [openCards, setOpenCards] = useState<LevelWordItem[]>([]);
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
+  const linkedWordCache = useRef(new Map<string, LevelWordItem>());
+  const mnemonicCardDeleteUndoRef = useRef(new Map<string, () => void | Promise<void>>());
+  const markHistoryRef = useRef<MarkHistoryItem[]>([]);
+  const committedWordStatesRef = useRef(
+    markMapFromWords(wordsWithClientProgress(words, isAuthenticated))
+  );
+  const pendingMarkChangesRef = useRef(new Map<string, WordMarkState | null>());
+  const pendingScrollRestoreRef = useRef<{ left: number; top: number } | null>(null);
+  const saveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const [mnemonicCardDeleteUndoIds, setMnemonicCardDeleteUndoIds] = useState<string[]>([]);
+
+  const updateWord = useCallback((updatedWord: LevelWordItem) => {
+    const hasPendingMark = pendingMarkChangesRef.current.has(updatedWord.id);
+    const pendingMarkState = hasPendingMark
+      ? (pendingMarkChangesRef.current.get(updatedWord.id) ?? null)
+      : null;
+    const nextUpdatedWord = {
+      ...updatedWord,
+      markState: hasPendingMark ? pendingMarkState : (updatedWord.markState ?? null),
+      isBookmarked: hasPendingMark ? pendingMarkState === "UNKNOWN" : updatedWord.isBookmarked
+    };
+    const mergeWord = (word: LevelWordItem) =>
+      word.id === nextUpdatedWord.id
+        ? {
+            ...word,
+            ...nextUpdatedWord
+          }
+        : word;
+
+    linkedWordCache.current.set(nextUpdatedWord.slug, nextUpdatedWord);
+    setOpenCards((current) => current.map(mergeWord));
+    setDisplayWords((current) => current.map(mergeWord));
+    setWordStates((current) => {
+      const next = new Map(current);
+      if (nextUpdatedWord.markState) {
+        next.set(nextUpdatedWord.id, nextUpdatedWord.markState);
+      } else {
+        next.delete(nextUpdatedWord.id);
+      }
+      return next;
+    });
+  }, []);
+  const refreshWordCard = useCallback(
+    async (slug: string) => {
+      const fetchedWord = await fetchWordCard(slug);
+      if (!fetchedWord) return;
+      const wordWithProgress = isAuthenticated
+        ? fetchedWord
+        : applyGuestProgressToWord(fetchedWord);
+      updateWord(wordWithProgress);
+    },
+    [isAuthenticated, updateWord]
+  );
+  const activateWordCard = useCallback((wordId: string | null) => {
+    setActiveCardId(wordId);
+    if (wordId) setSelectedWordId(wordId);
+  }, []);
+  const openWord = useCallback(
+    (word: LevelWordItem) => {
+      activateWordCard(word.id);
+      setOpenCards((current) =>
+        [word, ...current.filter((item) => item.id !== word.id)].slice(0, 5)
+      );
+      void refreshWordCard(word.slug);
+    },
+    [activateWordCard, refreshWordCard]
+  );
+
+  const closeWord = (wordId: string) => {
+    setOpenCards((current) => current.filter((item) => item.id !== wordId));
+  };
+  const replaceActiveWordCard = useCallback(
+    (currentWordId: string, nextWord: LevelWordItem | null) => {
+      if (!nextWord) {
+        setOpenCards((current) => current.filter((item) => item.id !== currentWordId));
+        setActiveCardId((current) => (current === currentWordId ? null : current));
+        setSelectedWordId((current) => (current === currentWordId ? null : current));
+        return;
+      }
+
+      activateWordCard(nextWord.id);
+      setOpenCards((current) =>
+        [
+          nextWord,
+          ...current.filter((item) => item.id !== currentWordId && item.id !== nextWord.id)
+        ].slice(0, 5)
+      );
+      void refreshWordCard(nextWord.slug);
+    },
+    [activateWordCard, refreshWordCard]
+  );
+
+  useEffect(() => {
+    const nextWords = wordsWithClientProgress(words, isAuthenticated);
+    const committedStates = markMapFromWords(nextWords);
+    const pendingChanges = new Map(pendingMarkChangesRef.current);
+    for (const [wordId, pendingState] of pendingChanges) {
+      if (pendingState === (committedStates.get(wordId) ?? null)) {
+        pendingChanges.delete(wordId);
+      }
+    }
+    const visibleStates = mergeMarkStates(committedStates, pendingChanges);
+    const nextPendingCount = pendingChanges.size;
+
+    committedWordStatesRef.current = committedStates;
+    pendingMarkChangesRef.current = pendingChanges;
+    setDisplayWords(prepareWordsForDisplay(words, isAuthenticated, visibleStates));
+    setActiveSort(sort);
+    setWordStates(visibleStates);
+    setPendingSaveCount(nextPendingCount);
+    if (nextPendingCount) {
+      const isSaving = Boolean(saveInFlightRef.current);
+      setSaveStatus(isSaving ? "saving" : "dirty");
+      setSaveMessage(
+        isSaving
+          ? `正在保存 ${nextPendingCount} 个单词标记...`
+          : `${nextPendingCount} 个单词标记未保存。`
+      );
+    } else if (!saveInFlightRef.current) {
+      setSaveStatus("idle");
+      setSaveMessage("");
+    }
+    setRoundResetWordIds(new Set());
+    markHistoryRef.current = [];
+    setMarkHistory([]);
+
+    const scrollPosition = pendingScrollRestoreRef.current;
+    if (scrollPosition) {
+      pendingScrollRestoreRef.current = null;
+      restoreWindowScroll(scrollPosition);
+    }
+  }, [isAuthenticated, sort, words]);
+
+  useEffect(() => {
+    if (isAuthenticated) return;
+
+    const refreshGuestProgress = () => {
+      const nextWords = wordsWithClientProgress(words, false);
+      const committedStates = markMapFromWords(nextWords);
+      const visibleStates = mergeMarkStates(committedStates, pendingMarkChangesRef.current);
+      setDisplayWords(prepareWordsForDisplay(words, false, visibleStates));
+      setWordStates(visibleStates);
+      setRoundResetWordIds(new Set());
+      setOpenCards((current) => current.map((word) => applyGuestProgressToWord(word)));
+    };
+
+    window.addEventListener(GUEST_PROGRESS_CHANGED_EVENT, refreshGuestProgress);
+    window.addEventListener("storage", refreshGuestProgress);
+    return () => {
+      window.removeEventListener(GUEST_PROGRESS_CHANGED_EVENT, refreshGuestProgress);
+      window.removeEventListener("storage", refreshGuestProgress);
+    };
+  }, [isAuthenticated, words]);
+
+  const sortHref = (value: SortMode) => {
+    return `${basePath}?sort=${value}`;
+  };
+  const persistMarkStates = useCallback(
+    async (changes: Array<[string, WordMarkState | null]>) => {
+      if (!isAuthenticated) {
+        saveGuestWordMarkStates(changes);
+        return;
+      }
+      await saveWordMarkStates(changes);
+    },
+    [isAuthenticated]
+  );
+  const applySavedMarkChanges = useCallback((changes: Array<[string, WordMarkState | null]>) => {
+    for (const [wordId, state] of changes) {
+      if (state) {
+        committedWordStatesRef.current.set(wordId, state);
+      } else {
+        committedWordStatesRef.current.delete(wordId);
+      }
+
+      if (
+        pendingMarkChangesRef.current.has(wordId) &&
+        pendingMarkChangesRef.current.get(wordId) === state
+      ) {
+        pendingMarkChangesRef.current.delete(wordId);
+      }
+    }
+
+    const nextCount = pendingMarkChangesRef.current.size;
+    setPendingSaveCount(nextCount);
+    setSaveStatus(nextCount ? "dirty" : "saved");
+    setSaveMessage(nextCount ? `${nextCount} 个单词标记未保存。` : "单词标记已保存。");
+  }, []);
+  const updatePendingMarkChange = useCallback((wordId: string, state: WordMarkState | null) => {
+    const committedState = committedWordStatesRef.current.get(wordId) ?? null;
+    if (state === committedState) {
+      pendingMarkChangesRef.current.delete(wordId);
+    } else {
+      pendingMarkChangesRef.current.set(wordId, state);
+    }
+
+    const nextCount = pendingMarkChangesRef.current.size;
+    setPendingSaveCount(nextCount);
+    setSaveStatus(nextCount ? "dirty" : "idle");
+    setSaveMessage(nextCount ? `${nextCount} 个单词标记未保存。` : "");
+  }, []);
+  const savePendingMarks = useCallback(async () => {
+    if (saveInFlightRef.current) return saveInFlightRef.current;
+
+    const changes = Array.from(pendingMarkChangesRef.current.entries());
+    if (!changes.length) {
+      setSaveStatus("idle");
+      setSaveMessage("");
+      return true;
+    }
+
+    const savePromise = (async () => {
+      setSaveStatus("saving");
+      setSaveMessage(`正在保存 ${changes.length} 个单词标记...`);
+      try {
+        await persistMarkStates(changes);
+      } catch (error) {
+        setSaveStatus("error");
+        setSaveMessage(error instanceof Error ? error.message : "保存失败，请重试。");
+        return false;
+      }
+
+      applySavedMarkChanges(changes);
+      return true;
+    })();
+
+    saveInFlightRef.current = savePromise;
+    try {
+      return await savePromise;
+    } finally {
+      if (saveInFlightRef.current === savePromise) {
+        saveInFlightRef.current = null;
+      }
+    }
+  }, [applySavedMarkChanges, persistMarkStates]);
+  const flushPendingMarksInBackground = useCallback(() => {
+    const changes = Array.from(pendingMarkChangesRef.current.entries());
+    if (!changes.length) return;
+
+    if (!isAuthenticated) {
+      saveGuestWordMarkStates(changes);
+      applySavedMarkChanges(changes);
+      return;
+    }
+
+    void saveWordMarkStates(changes, { keepalive: true })
+      .then(() => applySavedMarkChanges(changes))
+      .catch(() => {
+        // The explicit save button and beforeunload warning remain the visible recovery path.
+      });
+  }, [applySavedMarkChanges, isAuthenticated]);
+  const reshuffleWords = useCallback(async () => {
+    const saved = await savePendingMarks();
+    if (!saved) return;
+
+    const query = new URLSearchParams({ sort: "random", seed: createRandomSeed() });
+    pendingScrollRestoreRef.current = { left: window.scrollX, top: window.scrollY };
+    setOpenCards([]);
+    setActiveCardId(null);
+    setActiveSort("random");
+    setRoundResetWordIds(new Set());
+    router.push(`${basePath}?${query.toString()}`, { scroll: false });
+  }, [basePath, router, savePendingMarks]);
+  const markWord = useCallback(
+    (word: LevelWordItem, state: WordMarkState | null) => {
+      const previousWords = displayWords;
+      const previousState = wordStates.has(word.id)
+        ? (wordStates.get(word.id) ?? null)
+        : word.markState;
+      const previousWord = applyMarkSnapshot(word, previousState);
+      const previousWasRoundReset = roundResetWordIds.has(word.id);
+
+      markHistoryRef.current = [
+        ...markHistoryRef.current,
+        { wordId: word.id, previousState, previousWord, previousWasRoundReset, previousWords }
+      ];
+      setMarkHistory(markHistoryRef.current);
+      setRoundResetWordIds((current) => {
+        const next = new Set(current);
+        next.delete(word.id);
+        return next;
+      });
+      setWordStates((current) => {
+        const next = new Map(current);
+        if (state) {
+          next.set(word.id, state);
+        } else {
+          next.delete(word.id);
+        }
+        return next;
+      });
+      setDisplayWords((current) => applyMarkedWord(current, word.id, state));
+      setOpenCards((current) =>
+        current.map((item) => (item.id === word.id ? applyMarkSnapshot(item, state) : item))
+      );
+      linkedWordCache.current.set(
+        word.slug,
+        applyMarkSnapshot(linkedWordCache.current.get(word.slug) ?? word, state)
+      );
+      updatePendingMarkChange(word.id, state);
+    },
+    [displayWords, roundResetWordIds, updatePendingMarkChange, wordStates]
+  );
+  const undoLastMark = useCallback(() => {
+    const last = markHistoryRef.current.at(-1);
+    if (!last) return;
+
+    markHistoryRef.current = markHistoryRef.current.slice(0, -1);
+    setMarkHistory(markHistoryRef.current);
+    setDisplayWords(last.previousWords);
+    setRoundResetWordIds((current) => {
+      const next = new Set(current);
+      if (last.previousWasRoundReset) {
+        next.add(last.wordId);
+      } else {
+        next.delete(last.wordId);
+      }
+      return next;
+    });
+    setWordStates((current) => {
+      const next = new Map(current);
+      if (last.previousState) {
+        next.set(last.wordId, last.previousState);
+      } else {
+        next.delete(last.wordId);
+      }
+      return next;
+    });
+    setOpenCards((current) =>
+      current.map((word) =>
+        word.id === last.wordId ? applyMarkSnapshot(word, last.previousState) : word
+      )
+    );
+    linkedWordCache.current.set(last.previousWord.slug, last.previousWord);
+    updatePendingMarkChange(last.wordId, last.previousState);
+  }, [updatePendingMarkChange]);
+  const updateMnemonicCardDeleteUndo = useCallback((state: MnemonicCardDeleteUndoState) => {
+    if (state.canUndo) {
+      mnemonicCardDeleteUndoRef.current.set(state.wordId, state.restore);
+    } else {
+      mnemonicCardDeleteUndoRef.current.delete(state.wordId);
+    }
+
+    setMnemonicCardDeleteUndoIds((current) => {
+      const hasWord = current.includes(state.wordId);
+      if (state.canUndo) return hasWord ? current : [...current, state.wordId];
+      if (!hasWord) return current;
+      return current.filter((wordId) => wordId !== state.wordId);
+    });
+  }, []);
+  const undoLastAction = useCallback(() => {
+    const activeCardRestore = activeCardId
+      ? mnemonicCardDeleteUndoRef.current.get(activeCardId)
+      : null;
+    const fallbackCardRestore = mnemonicCardDeleteUndoIds.length
+      ? mnemonicCardDeleteUndoRef.current.get(mnemonicCardDeleteUndoIds.at(-1) ?? "")
+      : null;
+    const restoreDeletedMnemonicCard = activeCardRestore ?? fallbackCardRestore;
+    if (restoreDeletedMnemonicCard) {
+      void restoreDeletedMnemonicCard();
+      return;
+    }
+
+    undoLastMark();
+  }, [activeCardId, mnemonicCardDeleteUndoIds, undoLastMark]);
+  const canUndoLastAction = markHistory.length > 0 || mnemonicCardDeleteUndoIds.length > 0;
+
+  useEffect(() => {
+    const handleSaveRequest = () => {
+      void savePendingMarks();
+    };
+
+    window.addEventListener(WORD_MARK_SAVE_REQUEST_EVENT, handleSaveRequest);
+    return () => window.removeEventListener(WORD_MARK_SAVE_REQUEST_EVENT, handleSaveRequest);
+  }, [savePendingMarks]);
+
+  useEffect(() => {
+    if (!pendingSaveCount) return;
+
+    const intervalId = window.setInterval(() => {
+      void savePendingMarks();
+    }, 5_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [pendingSaveCount, savePendingMarks]);
+
+  useEffect(() => {
+    const detail: WordMarkSaveStateDetail = {
+      pendingCount: pendingSaveCount,
+      status: saveStatus,
+      message: saveMessage
+    };
+    window.dispatchEvent(new CustomEvent(WORD_MARK_SAVE_STATE_EVENT, { detail }));
+  }, [pendingSaveCount, saveMessage, saveStatus]);
+
+  useEffect(() => {
+    if (!pendingSaveCount) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      flushPendingMarksInBackground();
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [flushPendingMarksInBackground, pendingSaveCount]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flushPendingMarksInBackground();
+      }
+    };
+    const handlePageHide = () => {
+      flushPendingMarksInBackground();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, [flushPendingMarksInBackground]);
+
+  useEffect(() => {
+    const handleDocumentClick = (event: globalThis.MouseEvent) => {
+      if (
+        !pendingMarkChangesRef.current.size ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      const target = event.target instanceof Element ? event.target : null;
+      const anchor = target?.closest<HTMLAnchorElement>("a[href]");
+      if (!anchor || anchor.target || anchor.download) return;
+      if (anchor.matches(".wiki-link-word")) return;
+
+      const nextUrl = new URL(anchor.href, window.location.href);
+      if (nextUrl.origin !== window.location.origin) return;
+      if (nextUrl.href === window.location.href) return;
+
+      event.preventDefault();
+      void (async () => {
+        const saved = await savePendingMarks();
+        if (!saved) return;
+        router.push(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+      })();
+    };
+
+    document.addEventListener("click", handleDocumentClick, true);
+    return () => document.removeEventListener("click", handleDocumentClick, true);
+  }, [router, savePendingMarks]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        !event.shiftKey ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.key.toLowerCase() !== "r"
+      )
+        return;
+      if (!markHistoryRef.current.length && !mnemonicCardDeleteUndoRef.current.size) return;
+      if (isTextEditingTarget(event.target)) return;
+
+      event.preventDefault();
+      undoLastAction();
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [undoLastAction]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey
+      )
+        return;
+      if (isTextEditingTarget(event.target)) return;
+      if (!activeCardId) return;
+
+      const activeWord = openCards.find((word) => word.id === activeCardId);
+      if (!activeWord) return;
+
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        const direction: WordNavigationDirection = event.key === "ArrowLeft" ? "previous" : "next";
+        const nextWord = adjacentDisplayWord(displayWords, activeWord.id, direction);
+        if (!nextWord) return;
+
+        event.preventDefault();
+        replaceActiveWordCard(activeWord.id, nextWord);
+        return;
+      }
+
+      const shortcutState = keyboardMarkState(event.key);
+      if (!shortcutState || event.repeat) return;
+
+      event.preventDefault();
+      const currentState = wordStates.has(activeWord.id)
+        ? (wordStates.get(activeWord.id) ?? null)
+        : (activeWord.markState ?? null);
+      const nextState =
+        currentState === shortcutState && shortcutState !== "KNOWN" ? null : shortcutState;
+      markWord(activeWord, nextState);
+
+      if (shortcutState === "KNOWN") {
+        const nextWord = adjacentDisplayWord(displayWords, activeWord.id, "next");
+        replaceActiveWordCard(activeWord.id, nextWord);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeCardId, displayWords, markWord, openCards, replaceActiveWordCard, wordStates]);
+
+  useEffect(() => {
+    if (!selectedWordId) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      focusLevelWordItem(selectedWordId);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeCardId, selectedWordId, view]);
+
+  const wordBySlug = new Map(displayWords.map((word) => [word.slug, word]));
+  const openLinkedWord = async (slug: string) => {
+    const linkedWord = wordBySlug.get(slug) ?? linkedWordCache.current.get(slug);
+    if (linkedWord) {
+      openWord(linkedWord);
+      return true;
+    }
+
+    const fetchedWord = await fetchWordCard(slug);
+    if (!fetchedWord) return false;
+    const wordWithProgress = isAuthenticated ? fetchedWord : applyGuestProgressToWord(fetchedWord);
+    linkedWordCache.current.set(wordWithProgress.slug, wordWithProgress);
+    openWord(wordWithProgress);
+    return true;
+  };
+
+  return (
+    <section className="mt-8">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-y border-[#d8dde6] py-3 dark:border-border">
+        <div className="text-sm font-medium text-[#69717f] dark:text-muted-foreground">
+          {displayWords.length} 个单词
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={undoLastAction}
+            disabled={!canUndoLastAction}
+            title="撤销上一步，含记忆卡删除 (Shift+R)"
+            aria-label="撤销上一步，快捷键 Shift+R"
+            className="flex h-10 w-10 appearance-none items-center justify-center rounded-md border border-[#d8dde6] bg-white text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] disabled:pointer-events-none disabled:opacity-35 dark:border-border dark:bg-card dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+          <div className="grid grid-cols-3 overflow-hidden rounded-md border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
+            {sortOptions.map((option) =>
+              option.value === "random" ? (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={reshuffleWords}
+                  aria-pressed={activeSort === option.value}
+                  className={cn(
+                    "flex h-10 appearance-none items-center justify-center border-l border-[#d8dde6] px-3 text-sm font-semibold transition first:border-l-0",
+                    activeSort === option.value
+                      ? "bg-[#171a1f] text-white dark:bg-foreground dark:text-background"
+                      : "text-[#69717f] hover:bg-[#eef2f6] hover:text-[#171a1f] dark:border-border dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-foreground"
+                  )}
+                >
+                  {option.label}
+                </button>
+              ) : (
+                <Link
+                  key={option.value}
+                  href={sortHref(option.value)}
+                  className={cn(
+                    "flex h-10 items-center justify-center border-l border-[#d8dde6] px-3 text-sm font-semibold transition first:border-l-0",
+                    activeSort === option.value
+                      ? "bg-[#171a1f] text-white dark:bg-foreground dark:text-background"
+                      : "text-[#69717f] hover:bg-[#eef2f6] hover:text-[#171a1f] dark:border-border dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-foreground"
+                  )}
+                >
+                  {option.label}
+                </Link>
+              )
+            )}
+          </div>
+          <div className="grid grid-cols-2 overflow-hidden rounded-md border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
+            <button
+              type="button"
+              onClick={() => setView("grid")}
+              title="格子展示"
+              aria-label="格子展示"
+              className={cn(
+                "flex h-10 w-11 appearance-none items-center justify-center transition",
+                view === "grid"
+                  ? "bg-[#171a1f] text-white dark:bg-foreground dark:text-background"
+                  : "text-[#69717f] hover:bg-[#eef2f6] dark:text-muted-foreground dark:hover:bg-muted"
+              )}
+            >
+              <Grid2X2 className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("list")}
+              title="列表展示"
+              aria-label="列表展示"
+              className={cn(
+                "flex h-10 w-11 appearance-none items-center justify-center border-l border-[#d8dde6] transition",
+                view === "list"
+                  ? "bg-[#171a1f] text-white dark:bg-foreground dark:text-background"
+                  : "text-[#69717f] hover:bg-[#eef2f6] dark:text-muted-foreground dark:hover:bg-muted"
+              )}
+            >
+              <List className="h-4 w-4" />
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowMeaning((value) => !value)}
+            className="inline-flex h-10 appearance-none items-center gap-2 rounded-md border border-[#d8dde6] bg-white px-3 text-sm font-semibold text-[#171a1f] transition hover:border-[#171a1f] dark:border-border dark:bg-card dark:text-foreground dark:hover:border-foreground"
+          >
+            {showMeaning ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            {showMeaning ? "隐藏释义" : "显示释义"}
+          </button>
+        </div>
+      </div>
+
+      {displayWords.length === 0 ? (
+        <div className="mt-8 rounded-lg border border-dashed border-[#cbd3df] bg-white p-10 text-center text-sm font-medium text-[#69717f] dark:border-border dark:bg-card dark:text-muted-foreground">
+          当前分类暂无单词。
+        </div>
+      ) : view === "grid" ? (
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {displayWords.map((word, index) => (
+            <WordCard
+              key={`${word.id}-${index}`}
+              word={word}
+              markState={visibleMarkState(
+                word.id,
+                wordStates.get(word.id) ?? null,
+                roundResetWordIds
+              )}
+              showMeaning={showMeaning}
+              isSelected={selectedWordId === word.id}
+              onOpen={openWord}
+              onMark={markWord}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-5 overflow-hidden rounded-lg border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
+          {displayWords.map((word, index) => (
+            <WordRow
+              key={`${word.id}-${index}`}
+              word={word}
+              markState={visibleMarkState(
+                word.id,
+                wordStates.get(word.id) ?? null,
+                roundResetWordIds
+              )}
+              showMeaning={showMeaning}
+              isSelected={selectedWordId === word.id}
+              onOpen={openWord}
+              onMark={markWord}
+            />
+          ))}
+        </div>
+      )}
+
+      {openCards.length ? (
+        <MemoryCardTray
+          words={openCards}
+          activeCardId={activeCardId}
+          onActivate={activateWordCard}
+          onClose={closeWord}
+          onOpenLinkedWord={openLinkedWord}
+          onWordUpdate={updateWord}
+          onCollectionMark={markWord}
+          onMnemonicCardDeleteUndoChange={updateMnemonicCardDeleteUndo}
+          isAuthenticated={isAuthenticated}
+          defaultUserCardVisibility={defaultUserCardVisibility}
+          canEditOfficialCards={canEditOfficialCards}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function markMapFromWords(words: LevelWordItem[]) {
+  const markMap = new Map<string, WordMarkState>();
+  for (const word of words) {
+    if (word.markState) markMap.set(word.id, word.markState);
+  }
+  return markMap;
+}
+
+function mergeMarkStates(
+  committedStates: Map<string, WordMarkState>,
+  pendingChanges: Map<string, WordMarkState | null>
+) {
+  const mergedStates = new Map(committedStates);
+  for (const [wordId, state] of pendingChanges) {
+    if (state) {
+      mergedStates.set(wordId, state);
+    } else {
+      mergedStates.delete(wordId);
+    }
+  }
+  return mergedStates;
+}
+
+function wordsWithClientProgress(words: LevelWordItem[], isAuthenticated: boolean) {
+  return isAuthenticated ? words : applyGuestProgressToWords(words);
+}
+
+function prepareWordsForDisplay(
+  words: LevelWordItem[],
+  isAuthenticated: boolean,
+  states?: Map<string, WordMarkState>
+) {
+  return uniqueWords(wordsWithClientProgress(words, isAuthenticated))
+    .map((word) => {
+      const state = states ? (states.get(word.id) ?? null) : word.markState;
+      return {
+        ...word,
+        markState: state
+      };
+    })
+    .filter((word) => word.markState !== "KNOWN");
+}
+
+function uniqueWords(words: LevelWordItem[]) {
+  const seen = new Set<string>();
+  const unique: LevelWordItem[] = [];
+  for (const word of words) {
+    if (seen.has(word.id)) continue;
+    seen.add(word.id);
+    unique.push(word);
+  }
+  return unique;
+}
+
+function visibleMarkState(
+  wordId: string,
+  state: WordMarkState | null,
+  roundResetWordIds: Set<string>
+) {
+  return roundResetWordIds.has(wordId) ? null : state;
+}
+
+function createRandomSeed() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function restoreWindowScroll(position: { left: number; top: number }) {
+  window.requestAnimationFrame(() => {
+    window.scrollTo(position.left, position.top);
+    window.requestAnimationFrame(() => window.scrollTo(position.left, position.top));
+  });
+}
+
+function focusLevelWordItem(wordId: string) {
+  const wordElement = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-level-word-id]")
+  ).find((element) => element.dataset.levelWordId === wordId);
+  if (!wordElement) return;
+
+  wordElement.focus({ preventScroll: true });
+  wordElement.scrollIntoView({
+    block: "center",
+    inline: "nearest",
+    behavior: "auto"
+  });
+}
+
+function adjacentDisplayWord(
+  words: LevelWordItem[],
+  wordId: string,
+  direction: WordNavigationDirection
+) {
+  const currentIndex = words.findIndex((word) => word.id === wordId);
+  if (currentIndex < 0) return null;
+
+  const nextIndex = currentIndex + (direction === "next" ? 1 : -1);
+  return words[nextIndex] ?? null;
+}
+
+function keyboardMarkState(key: string): WordMarkState | null {
+  const normalizedKey = key.toLowerCase();
+  if (normalizedKey === "v") return "KNOWN";
+  if (normalizedKey === "o") return "FUZZY";
+  if (normalizedKey === "x") return "UNKNOWN";
+  return null;
+}
+
+function isTextEditingTarget(target: EventTarget | null) {
+  return (
+    (target instanceof HTMLInputElement &&
+      !["button", "checkbox", "radio", "range"].includes(target.type)) ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
+function applyMarkedWord(words: LevelWordItem[], wordId: string, state: WordMarkState | null) {
+  if (state === "KNOWN") {
+    return words.filter((word) => word.id !== wordId);
+  }
+
+  return uniqueWords(words).map((word) =>
+    word.id === wordId ? applyMarkSnapshot(word, state) : word
+  );
+}
+
+function applyMarkSnapshot(word: LevelWordItem, state: WordMarkState | null) {
+  return {
+    ...word,
+    markState: state,
+    isBookmarked: state === "UNKNOWN"
+  };
+}
+
+async function saveWordMarkStates(
+  changes: Array<[string, WordMarkState | null]>,
+  options: { keepalive?: boolean } = {}
+) {
+  const response = await fetch("/api/word-marks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      changes: changes.map(([wordId, state]) => ({ wordId, state }))
+    }),
+    cache: "no-store",
+    keepalive: options.keepalive
+  });
+
+  if (!response.ok) {
+    const result = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(result.error || "Failed to save word marks.");
+  }
+}
+
+async function fetchWordCard(slug: string) {
+  const response = await fetch(`/api/word-card/${encodeURIComponent(slug)}?fresh=${Date.now()}`, {
+    cache: "no-store"
+  });
+  if (!response.ok) return null;
+  return (await response.json()) as LevelWordItem;
+}
+
+function WordCard({
+  word,
+  markState,
+  showMeaning,
+  isSelected,
+  onOpen,
+  onMark
+}: {
+  word: LevelWordItem;
+  markState: WordMarkState | null;
+  showMeaning: boolean;
+  isSelected: boolean;
+  onOpen: (word: LevelWordItem) => void;
+  onMark: (word: LevelWordItem, state: WordMarkState | null) => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      data-level-word-id={word.id}
+      onClick={() => onOpen(word)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(word);
+        }
+      }}
+      className={cn(
+        "group flex min-h-44 appearance-none flex-col justify-between rounded-lg border border-[#d8dde6] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#171a1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:border-border dark:bg-card dark:hover:border-foreground",
+        isSelected &&
+          "border-[#1a73e8] ring-2 ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
+      )}
+    >
+      <span>
+        <span className="word-card-title block truncate font-semibold tracking-normal text-[#171a1f] dark:text-foreground">
+          {word.word}
+        </span>
+        <span className="word-card-meaning mt-6 block min-h-12 text-[#323741] dark:text-foreground/80">
+          {showMeaning ? word.shortMeaningCn || word.meaningCn || "释义待补" : "••••••"}
+        </span>
+      </span>
+      <MarkButtons
+        word={word}
+        markState={markState}
+        onMark={onMark}
+        className="mt-4 border-t border-[#eef2f6] pt-3 dark:border-border"
+      />
+    </div>
+  );
+}
+
+function WordRow({
+  word,
+  markState,
+  showMeaning,
+  isSelected,
+  onOpen,
+  onMark
+}: {
+  word: LevelWordItem;
+  markState: WordMarkState | null;
+  showMeaning: boolean;
+  isSelected: boolean;
+  onOpen: (word: LevelWordItem) => void;
+  onMark: (word: LevelWordItem, state: WordMarkState | null) => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      data-level-word-id={word.id}
+      onClick={() => onOpen(word)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(word);
+        }
+      }}
+      className={cn(
+        "grid min-h-16 w-full appearance-none gap-3 border-b border-[#e5e9f0] px-4 py-3 text-left transition last:border-b-0 hover:bg-[#f6f8fb] focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1a73e8] dark:border-border dark:hover:bg-muted sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-center",
+        isSelected &&
+          "border-[#1a73e8] ring-2 ring-inset ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
+      )}
+    >
+      <span className="word-row-title min-w-0 truncate font-semibold text-[#171a1f] dark:text-foreground">
+        {word.word}
+      </span>
+      <span className="word-row-meaning min-w-0 truncate text-[#323741] dark:text-foreground/80">
+        {showMeaning ? word.shortMeaningCn || word.meaningCn || "释义待补" : "••••••"}
+      </span>
+      <MarkButtons word={word} markState={markState} onMark={onMark} />
+    </div>
+  );
+}
+
+function MarkButtons({
+  word,
+  markState,
+  onMark,
+  className
+}: {
+  word: LevelWordItem;
+  markState: WordMarkState | null;
+  onMark: (word: LevelWordItem, state: WordMarkState | null) => void;
+  className?: string;
+}) {
+  const buttons = [
+    {
+      state: "KNOWN" as const,
+      label: "熟练单词",
+      icon: Check,
+      idle: "border-[#b9e5ce] bg-[#effaf3] text-[#168458] hover:border-[#168458]",
+      active: "border-[#168458] bg-[#168458] text-white"
+    },
+    {
+      state: "FUZZY" as const,
+      label: "模糊单词",
+      icon: Circle,
+      idle: "border-[#ead38a] bg-[#fff8df] text-[#9a6a00] hover:border-[#c08a00]",
+      active: "border-[#c08a00] bg-[#d89a00] text-white"
+    },
+    {
+      state: "UNKNOWN" as const,
+      label: "陌生单词",
+      icon: X,
+      idle: "border-[#f1b8ad] bg-[#fff1ee] text-[#c2412d] hover:border-[#c2412d]",
+      active: "border-[#c2412d] bg-[#c2412d] text-white"
+    }
+  ];
+
+  return (
+    <div className={cn("flex items-center gap-2", className)}>
+      {buttons.map((button) => {
+        const Icon = button.icon;
+        const active = markState === button.state;
+        return (
+          <button
+            key={button.state}
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onMark(word, active && button.state !== "KNOWN" ? null : button.state);
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
+            aria-label={
+              active ? `${word.word} 取消${button.label}标记` : `${word.word} 标记为${button.label}`
+            }
+            title={active ? `取消${button.label}` : button.label}
+            className={cn(
+              "flex h-8 w-8 shrink-0 appearance-none items-center justify-center rounded-full border transition",
+              active ? button.active : button.idle
+            )}
+          >
+            <Icon className="h-4 w-4" />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function MemoryCardTray({
+  words,
+  activeCardId,
+  onActivate,
+  onClose,
+  onOpenLinkedWord,
+  onWordUpdate,
+  onCollectionMark,
+  onMnemonicCardDeleteUndoChange,
+  isAuthenticated,
+  defaultUserCardVisibility = "private",
+  canEditOfficialCards = false
+}: {
+  words: LevelWordItem[];
+  activeCardId: string | null;
+  onActivate: (wordId: string | null) => void;
+  onClose: (wordId: string) => void;
+  onOpenLinkedWord: (slug: string) => Promise<boolean>;
+  onWordUpdate: (word: LevelWordItem) => void;
+  onCollectionMark?: (word: LevelWordItem, state: WordMarkState | null) => void;
+  onMnemonicCardDeleteUndoChange?: (state: MnemonicCardDeleteUndoState) => void;
+  isAuthenticated: boolean;
+  defaultUserCardVisibility?: "private" | "public";
+  canEditOfficialCards?: boolean;
+}) {
+  const closeCard = (wordId: string) => {
+    const remainingWords = words.filter((word) => word.id !== wordId);
+    const activeCardWasClosed = activeCardId === wordId;
+    const activeCardStillOpen = remainingWords.some((word) => word.id === activeCardId);
+    const nextActiveCardId =
+      activeCardWasClosed || !activeCardStillOpen ? (remainingWords[0]?.id ?? null) : activeCardId;
+
+    onClose(wordId);
+    if (nextActiveCardId !== activeCardId) {
+      onActivate(nextActiveCardId);
+    }
+  };
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-[#171a1f]/10 backdrop-blur-[1px] dark:bg-black/35" />
+      <div className="absolute inset-0">
+        {words.map((word, index) => (
+          <MemoryCard
+            key={word.id}
+            word={word}
+            index={index}
+            isActive={activeCardId === word.id}
+            onActivate={() => onActivate(word.id)}
+            onClose={() => closeCard(word.id)}
+            onOpenLinkedWord={onOpenLinkedWord}
+            onWordUpdate={onWordUpdate}
+            onCollectionMark={onCollectionMark}
+            onMnemonicCardDeleteUndoChange={onMnemonicCardDeleteUndoChange}
+            isAuthenticated={isAuthenticated}
+            defaultUserCardVisibility={defaultUserCardVisibility}
+            canEditOfficialCards={canEditOfficialCards}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MemoryCard({
+  word,
+  index,
+  isActive,
+  onActivate,
+  onClose,
+  onOpenLinkedWord,
+  onWordUpdate,
+  onCollectionMark,
+  onMnemonicCardDeleteUndoChange,
+  isAuthenticated,
+  defaultUserCardVisibility,
+  canEditOfficialCards
+}: {
+  word: LevelWordItem;
+  index: number;
+  isActive: boolean;
+  onActivate: () => void;
+  onClose: () => void;
+  onOpenLinkedWord: (slug: string) => Promise<boolean>;
+  onWordUpdate: (word: LevelWordItem) => void;
+  onCollectionMark?: (word: LevelWordItem, state: WordMarkState | null) => void;
+  onMnemonicCardDeleteUndoChange?: (state: MnemonicCardDeleteUndoState) => void;
+  isAuthenticated: boolean;
+  defaultUserCardVisibility: "private" | "public";
+  canEditOfficialCards: boolean;
+}) {
+  const mnemonicCards = useMemo(
+    () => (word.mnemonics.length ? word.mnemonics : word.mnemonic ? [word.mnemonic] : []),
+    [word.mnemonic, word.mnemonics]
+  );
+  const [activeMnemonicId, setActiveMnemonicId] = useState(() => mnemonicCards[0]?.id ?? "");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingMnemonicId, setEditingMnemonicId] = useState<string | null>(null);
+  const [draftContent, setDraftContent] = useState(() => defaultCustomCardTemplate(word.word));
+  const [isEditingMeaning, setIsEditingMeaning] = useState(false);
+  const [meaningDraft, setMeaningDraft] = useState(() => word.meaningCn || "");
+  const [isSavingMeaning, setIsSavingMeaning] = useState(false);
+  const [draftVisibility, setDraftVisibility] = useState<"private" | "public">(
+    defaultUserCardVisibility
+  );
+  const [relatedWords, setRelatedWords] = useState("");
+  const [editorMessage, setEditorMessage] = useState("");
+  const [isSavingCard, setIsSavingCard] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isBookmarking, setIsBookmarking] = useState(false);
+  const [isBookmarkMenuOpen, setIsBookmarkMenuOpen] = useState(false);
+  const [deletedHistory, setDeletedHistory] = useState<DeletedMnemonicCard[]>([]);
+  const [position, setPosition] = useState({ x: index * 30, y: index * 26 });
+  const articleRef = useRef<HTMLElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const bookmarkMenuRef = useRef<HTMLDivElement>(null);
+  const pronunciationAudioRef = useRef<HTMLAudioElement | null>(null);
+  const restoreLastDeletedRef = useRef<() => void | Promise<void>>(() => undefined);
+  const dragRef = useRef({
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    originX: 0,
+    originY: 0
+  });
+  const activeMnemonic =
+    mnemonicCards.find((card) => card.id === activeMnemonicId) ?? mnemonicCards[0] ?? null;
+  const collectionMarkState =
+    word.markState === "FUZZY" || word.markState === "UNKNOWN" ? word.markState : null;
+  const editingCard = editingMnemonicId
+    ? (mnemonicCards.find((card) => card.id === editingMnemonicId) ?? null)
+    : null;
+  const effectiveCanEditOfficialCards = canEditOfficialCards || Boolean(word.canEditOfficialCards);
+  const showDraftVisibilityChoice =
+    isAuthenticated &&
+    !effectiveCanEditOfficialCards &&
+    (!editingCard || editingCard.sourceType !== "OFFICIAL");
+  const saveCardLabel = effectiveCanEditOfficialCards ? "保存官方记忆卡" : "保存记忆卡";
+  const isEditingAny = isEditing || isEditingMeaning;
+  const isSavingCurrentEdit = isEditingMeaning ? isSavingMeaning : isSavingCard;
+  const saveCurrentEditLabel = isEditingMeaning ? "保存中文释义" : saveCardLabel;
+  const cancelCurrentEditLabel = isEditingMeaning ? "放弃中文释义修改" : "退出编辑，保留草稿";
+
+  useEffect(() => {
+    if (!mnemonicCards.length) {
+      setActiveMnemonicId("");
+      return;
+    }
+    if (!mnemonicCards.some((card) => card.id === activeMnemonicId)) {
+      setActiveMnemonicId(mnemonicCards[0].id);
+    }
+  }, [activeMnemonicId, mnemonicCards]);
+
+  useEffect(() => {
+    if (!isEditingMeaning) setMeaningDraft(word.meaningCn || "");
+  }, [isEditingMeaning, word.meaningCn]);
+
+  useEffect(() => {
+    if (!isBookmarkMenuOpen) return;
+
+    const handlePointerDown = (event: globalThis.PointerEvent) => {
+      const target = event.target instanceof Node ? event.target : null;
+      if (target && bookmarkMenuRef.current?.contains(target)) return;
+      setIsBookmarkMenuOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsBookmarkMenuOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isBookmarkMenuOpen]);
+
+  useEffect(() => {
+    if (!isActive || isEditingAny || isBookmarkMenuOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (
+        target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      )
+        return;
+
+      event.preventDefault();
+      onClose();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isActive, isBookmarkMenuOpen, isEditingAny, onClose]);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    saveMemoryCardDraft(word.id, editingMnemonicId, draftContent, relatedWords, draftVisibility);
+  }, [draftContent, draftVisibility, editingMnemonicId, isEditing, relatedWords, word.id]);
+
+  useEffect(() => {
+    if (!isEditingAny) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isEditingAny]);
+
+  const startDrag = (event: PointerEvent<HTMLElement>) => {
+    onActivate();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: position.x,
+      originY: position.y
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const drag = (event: PointerEvent<HTMLElement>) => {
+    if (dragRef.current.pointerId !== event.pointerId) return;
+    setPosition({
+      x: dragRef.current.originX + event.clientX - dragRef.current.startX,
+      y: dragRef.current.originY + event.clientY - dragRef.current.startY
+    });
+  };
+
+  const stopDrag = (event: PointerEvent<HTMLElement>) => {
+    if (dragRef.current.pointerId !== event.pointerId) return;
+    dragRef.current.pointerId = -1;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+  const handleMnemonicClick = async (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target instanceof Element ? event.target.closest("a") : null;
+    const href = target?.getAttribute("href");
+    if (!href?.startsWith("/word/")) return;
+    const slug = decodeURIComponent(href.replace("/word/", "").split(/[?#]/)[0] ?? "");
+    if (!slug) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    await onOpenLinkedWord(slug);
+  };
+  const playPronunciation = async () => {
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+
+    const audioUrls = uniqueStrings([
+      word.audioUsUrl,
+      word.audioUkUrl,
+      ...pronunciationAudioCandidates(word.word)
+    ]);
+    for (const audioUrl of audioUrls) {
+      try {
+        await playAudioUrl(audioUrl, pronunciationAudioRef);
+        return;
+      } catch {
+        // Try the next pronunciation source.
+      }
+    }
+
+    speakWord(word.word);
+  };
+  const startNewCard = () => {
+    if (isEditingMeaning) return;
+    if (!isAuthenticated) {
+      setEditorMessage("请先登录后再创建自己的记忆卡。");
+      return;
+    }
+
+    const savedDraft = readMemoryCardDraft(word.id, null);
+    setEditingMnemonicId(null);
+    setDraftVisibility(savedDraft?.visibility ?? defaultUserCardVisibility);
+    setDraftContent(savedDraft?.content ?? defaultCustomCardTemplate(word.word));
+    setRelatedWords(savedDraft?.relatedWords ?? "");
+    setEditorMessage(savedDraft ? "已恢复未保存草稿。" : "");
+    setIsEditing(true);
+  };
+  const startEditCard = (entryId: string) => {
+    if (isEditingMeaning || isSavingCard || isUploadingImage || isSavingMeaning) return;
+    const card = mnemonicCards.find((item) => item.id === entryId);
+    if (!card) return;
+    if (!card.canEdit) {
+      setActiveMnemonicId(card.id);
+      setEditorMessage(cardPermissionMessage(card));
+      return;
+    }
+
+    const savedDraft = readMemoryCardDraft(word.id, entryId);
+    setActiveMnemonicId(card.id);
+    setEditingMnemonicId(card.id);
+    setDraftVisibility(
+      savedDraft?.visibility ?? (card.sourceType === "USER_PUBLIC" ? "public" : "private")
+    );
+    setDraftContent(savedDraft?.content ?? editableMnemonicContent(card));
+    setRelatedWords(savedDraft?.relatedWords ?? relatedWordText(card.contentMarkdown));
+    setEditorMessage(savedDraft ? "已恢复未保存草稿。" : "");
+    setIsEditing(true);
+  };
+  const cancelNewCard = () => {
+    if (isSavingCard || isUploadingImage) return;
+    setEditingMnemonicId(null);
+    setDraftVisibility(defaultUserCardVisibility);
+    setDraftContent(defaultCustomCardTemplate(word.word));
+    setRelatedWords("");
+    setEditorMessage("未保存草稿已保留，下次编辑会自动恢复。");
+    setIsEditing(false);
+  };
+  const startEditMeaning = () => {
+    if (isEditingAny || isSavingCard || isUploadingImage || isSavingMeaning) return;
+    if (!effectiveCanEditOfficialCards) {
+      setEditorMessage("中文释义只能由编辑员修改。");
+      return;
+    }
+
+    setMeaningDraft(word.meaningCn || "");
+    setEditorMessage("");
+    setIsEditingMeaning(true);
+  };
+  const cancelMeaningEdit = () => {
+    if (isSavingMeaning) return;
+    setMeaningDraft(word.meaningCn || "");
+    setEditorMessage("已放弃中文释义修改。");
+    setIsEditingMeaning(false);
+  };
+  const saveMeaning = async () => {
+    if (isSavingMeaning) return;
+    const nextMeaning = meaningDraft.trim();
+    if (!nextMeaning) {
+      setEditorMessage("中文释义不能为空。");
+      return;
+    }
+
+    setIsSavingMeaning(true);
+    setEditorMessage("");
+    try {
+      const result = await updateWordMeaning(word.slug, nextMeaning);
+      if (result.word) onWordUpdate(result.word);
+      setIsEditingMeaning(false);
+      setEditorMessage("中文释义已保存。");
+    } catch (error) {
+      setEditorMessage(error instanceof Error ? error.message : "保存失败。");
+    } finally {
+      setIsSavingMeaning(false);
+    }
+  };
+  const chooseBookmarkMark = async (state: Extract<WordMarkState, "FUZZY" | "UNKNOWN"> | null) => {
+    if (isBookmarking) return;
+
+    setIsBookmarking(true);
+    setIsBookmarkMenuOpen(false);
+    setEditorMessage("");
+    try {
+      if (onCollectionMark) {
+        await onCollectionMark(word, state);
+      } else {
+        const result = await setWordCollectionMark(word.id, state, isAuthenticated);
+        onWordUpdate({ ...word, isBookmarked: result.isBookmarked, markState: result.markState });
+      }
+    } catch (error) {
+      setEditorMessage(error instanceof Error ? error.message : "标记失败。");
+    } finally {
+      setIsBookmarking(false);
+    }
+  };
+  const saveNewCard = async () => {
+    if (isEditingMeaning || isSavingCard) return;
+    const finalContent = withRelatedWordLinks(draftContent, relatedWords);
+    if (!finalContent.trim()) {
+      setEditorMessage("记忆卡内容不能为空。");
+      return;
+    }
+
+    setIsSavingCard(true);
+    setEditorMessage("");
+    const draftEntryId = editingMnemonicId;
+    const saveVisibility = effectiveCanEditOfficialCards ? "public" : draftVisibility;
+    try {
+      const result = editingMnemonicId
+        ? await updateMnemonicCard(word.slug, editingMnemonicId, finalContent, saveVisibility)
+        : await saveMnemonicCard(word.slug, finalContent, saveVisibility);
+      if (result.word) onWordUpdate(result.word);
+      clearMemoryCardDraft(word.id, draftEntryId);
+      setActiveMnemonicId(result.activeEntryId);
+      setEditingMnemonicId(null);
+      setDraftVisibility(defaultUserCardVisibility);
+      setDraftContent(defaultCustomCardTemplate(word.word));
+      setRelatedWords("");
+      setIsEditing(false);
+    } catch (error) {
+      setEditorMessage(error instanceof Error ? error.message : "保存失败。");
+    } finally {
+      setIsSavingCard(false);
+    }
+  };
+  const promoteCard = async (entryId: string) => {
+    if (isEditingAny || isSavingCard || isSavingMeaning) return;
+    const card = mnemonicCards.find((item) => item.id === entryId);
+    if (card && !card.canEdit && card.sourceType !== "OFFICIAL") {
+      setActiveMnemonicId(card.id);
+      setEditorMessage(cardPermissionMessage(card));
+      return;
+    }
+
+    setEditorMessage("");
+    try {
+      const result = await promoteMnemonicCard(word.slug, entryId);
+      if (result.word) onWordUpdate(result.word);
+      setActiveMnemonicId(result.activeEntryId);
+    } catch (error) {
+      setEditorMessage(error instanceof Error ? error.message : "排序失败。");
+    }
+  };
+  const restoreLastDeleted = useCallback(async () => {
+    const lastDeleted = deletedHistory.at(-1);
+    if (!lastDeleted || isEditingAny || isSavingCard || isSavingMeaning) return;
+
+    setIsSavingCard(true);
+    setEditorMessage("正在撤销删除...");
+    try {
+      const result = await restoreMnemonicCard(
+        word.slug,
+        lastDeleted.card.id,
+        lastDeleted.previousIndex
+      );
+      if (result.word) onWordUpdate(result.word);
+      setActiveMnemonicId(result.activeEntryId);
+      setDeletedHistory((current) => current.slice(0, -1));
+      setEditorMessage("");
+    } catch (error) {
+      setEditorMessage(error instanceof Error ? error.message : "撤销失败。");
+    } finally {
+      setIsSavingCard(false);
+    }
+  }, [deletedHistory, isEditingAny, isSavingCard, isSavingMeaning, onWordUpdate, word.slug]);
+  useEffect(() => {
+    restoreLastDeletedRef.current = restoreLastDeleted;
+  }, [restoreLastDeleted]);
+  const deleteCard = async (entryId: string, previousIndex: number) => {
+    if (isEditingAny || isSavingCard || isSavingMeaning) return;
+    const deletedCard = mnemonicCards.find((card) => card.id === entryId);
+    if (!deletedCard) return;
+    if (!deletedCard.canEdit) {
+      setActiveMnemonicId(deletedCard.id);
+      setEditorMessage(cardPermissionMessage(deletedCard));
+      return;
+    }
+
+    const remainingCards = mnemonicCards.filter((card) => card.id !== entryId);
+    const fallbackActiveId =
+      remainingCards[Math.min(previousIndex, Math.max(remainingCards.length - 1, 0))]?.id ?? "";
+    const nextActiveId = activeMnemonicId === entryId ? fallbackActiveId : activeMnemonicId;
+    const previousWord = word;
+
+    onWordUpdate({ ...word, mnemonic: remainingCards[0] ?? null, mnemonics: remainingCards });
+    setActiveMnemonicId(nextActiveId);
+    setIsSavingCard(true);
+    setEditorMessage("已删除，按 ⌘Z / Ctrl+Z 可撤销。");
+    try {
+      const result = await deleteMnemonicCard(word.slug, entryId);
+      if (result.word) onWordUpdate(result.word);
+      setActiveMnemonicId(result.activeEntryId);
+      setDeletedHistory((current) => [...current, { card: deletedCard, previousIndex }]);
+      setEditorMessage("已删除，按 ⌘Z / Ctrl+Z 可撤销。");
+    } catch (error) {
+      onWordUpdate(previousWord);
+      setActiveMnemonicId(activeMnemonicId);
+      setEditorMessage(error instanceof Error ? error.message : "删除失败。");
+    } finally {
+      setIsSavingCard(false);
+    }
+  };
+  const isPointInsideCard = (clientX: number, clientY: number) => {
+    const rect = articleRef.current?.getBoundingClientRect();
+    if (!rect) return true;
+    return (
+      clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
+    );
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const key = event.key.toLowerCase();
+      const isSystemUndo =
+        (event.metaKey || event.ctrlKey) && key === "z" && !event.shiftKey && !event.altKey;
+      const isPanelUndo =
+        event.shiftKey && key === "r" && !event.metaKey && !event.ctrlKey && !event.altKey;
+      if (!isSystemUndo && !isPanelUndo) return;
+      if (!deletedHistory.length || isEditingAny) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (
+        target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      )
+        return;
+
+      event.preventDefault();
+      void restoreLastDeleted();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [deletedHistory.length, isEditingAny, restoreLastDeleted]);
+
+  useEffect(() => {
+    onMnemonicCardDeleteUndoChange?.({
+      wordId: word.id,
+      canUndo: deletedHistory.length > 0 && !isEditingAny && !isSavingCard && !isSavingMeaning,
+      restore: () => restoreLastDeletedRef.current()
+    });
+
+    return () => {
+      onMnemonicCardDeleteUndoChange?.({
+        wordId: word.id,
+        canUndo: false,
+        restore: () => undefined
+      });
+    };
+  }, [deletedHistory.length, isEditingAny, isSavingCard, isSavingMeaning, onMnemonicCardDeleteUndoChange, word.id]);
+
+  const uploadDraftImage = async (file: File) => {
+    setIsUploadingImage(true);
+    setEditorMessage("正在保存图片...");
+    try {
+      const formData = new FormData();
+      formData.append("image", file, file.name || "memory-card-image.png");
+      const response = await fetch("/api/uploads/image", { method: "POST", body: formData });
+      const result = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!response.ok || !result.url) throw new Error(result.error || "图片上传失败。");
+      setDraftContent((current) => `${current.trimEnd()}\n\n![记忆图](${result.url})\n`);
+      setEditorMessage("图片已插入。");
+    } catch (error) {
+      setEditorMessage(error instanceof Error ? error.message : "图片上传失败。");
+    } finally {
+      setIsUploadingImage(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  };
+
+  return (
+    <article
+      ref={articleRef}
+      className="pointer-events-auto fixed left-1/2 top-20 flex max-h-[calc(100vh-7rem)] w-[min(640px,calc(100vw-32px))] flex-col overflow-hidden rounded-xl border border-[#d8dde6] bg-white shadow-[0_24px_80px_rgba(23,26,31,0.16)] dark:border-border dark:bg-card"
+      style={{
+        transform: `translate(calc(-50% + ${position.x}px), ${position.y}px)`,
+        zIndex: isActive ? 70 : 60 - index
+      }}
+      onPointerDown={onActivate}
+    >
+      <header
+        className="flex shrink-0 cursor-move touch-none items-start justify-between gap-4 border-b border-[#eef2f6] p-5 dark:border-border"
+        onPointerDown={startDrag}
+        onPointerMove={drag}
+        onPointerUp={stopDrag}
+        onPointerCancel={stopDrag}
+      >
+        <div className="min-w-0">
+          <h2
+            className="cursor-text select-text truncate text-4xl font-semibold tracking-normal text-[#171a1f] dark:text-foreground"
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              onActivate();
+            }}
+          >
+            {word.word}
+          </h2>
+          <div className="mt-2 flex items-center gap-2">
+            <p className="min-w-0 truncate text-sm text-[#69717f] dark:text-muted-foreground">
+              {[word.phonetic, word.partOfSpeech].filter(Boolean).join(" · ") || "单词信息"}
+            </p>
+            <button
+              type="button"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                void playPronunciation();
+              }}
+              aria-label={`播放 ${word.word} 的读音`}
+              title="播放读音"
+              className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-[#d8dde6] text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] dark:border-border dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
+            >
+              <Volume2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <div className="flex items-center gap-2">
+            {isEditingAny ? (
+              <>
+                <button
+                  type="button"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void (isEditingMeaning ? saveMeaning() : saveNewCard());
+                  }}
+                  disabled={isSavingCurrentEdit || isUploadingImage}
+                  aria-label={saveCurrentEditLabel}
+                  title={saveCurrentEditLabel}
+                  className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border border-[#b9e5ce] bg-[#effaf3] text-[#168458] transition hover:border-[#168458] disabled:pointer-events-none disabled:opacity-50 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300"
+                >
+                  {isSavingCurrentEdit ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (isEditingMeaning) {
+                      cancelMeaningEdit();
+                    } else {
+                      cancelNewCard();
+                    }
+                  }}
+                  disabled={isSavingCurrentEdit || isUploadingImage}
+                  aria-label={cancelCurrentEditLabel}
+                  title={cancelCurrentEditLabel}
+                  className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border border-[#f1b8ad] bg-[#fff1ee] text-[#c2412d] transition hover:border-[#c2412d] disabled:pointer-events-none disabled:opacity-50 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            ) : (
+              <>
+                <div ref={bookmarkMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (collectionMarkState) {
+                        void chooseBookmarkMark(null);
+                        return;
+                      }
+                      setIsBookmarkMenuOpen((value) => !value);
+                    }}
+                    disabled={isBookmarking}
+                    aria-expanded={isBookmarkMenuOpen}
+                    aria-label={collectionMarkState ? "取消收藏标记" : "选择加入不熟或陌生"}
+                    title={collectionMarkState ? "取消收藏标记" : "加入不熟或陌生"}
+                    className={cn(
+                      "flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border transition disabled:pointer-events-none disabled:opacity-60",
+                      collectionMarkState
+                        ? "border-[#e7c766] bg-[#fff8df] text-[#d89a00] hover:border-[#d89a00] dark:border-yellow-800/70 dark:bg-yellow-950/30 dark:text-yellow-300"
+                        : "border-[#d8dde6] text-[#69717f] hover:border-[#171a1f] hover:text-[#171a1f] dark:border-border dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
+                    )}
+                  >
+                    {isBookmarking ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Star className={cn("h-4 w-4", collectionMarkState ? "fill-current" : "")} />
+                    )}
+                  </button>
+                  {isBookmarkMenuOpen ? (
+                    <div
+                      className="absolute right-0 top-11 z-[80] flex flex-col gap-2 rounded-lg border border-[#d8dde6] bg-white p-2 shadow-lg dark:border-border dark:bg-card"
+                      onPointerDown={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void chooseBookmarkMark("FUZZY");
+                        }}
+                        disabled={isBookmarking}
+                        aria-label="加入不熟单词"
+                        aria-pressed={collectionMarkState === "FUZZY"}
+                        title="加入不熟"
+                        className={cn(
+                          "flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border transition disabled:pointer-events-none disabled:opacity-60",
+                          collectionMarkState === "FUZZY"
+                            ? "border-[#c08a00] bg-[#d89a00] text-white"
+                            : "border-[#ead38a] bg-[#fff8df] text-[#9a6a00] hover:border-[#c08a00]"
+                        )}
+                      >
+                        <Circle className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void chooseBookmarkMark("UNKNOWN");
+                        }}
+                        disabled={isBookmarking}
+                        aria-label="加入陌生单词"
+                        aria-pressed={collectionMarkState === "UNKNOWN"}
+                        title="加入陌生"
+                        className={cn(
+                          "flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border transition disabled:pointer-events-none disabled:opacity-60",
+                          collectionMarkState === "UNKNOWN"
+                            ? "border-[#c2412d] bg-[#c2412d] text-white"
+                            : "border-[#f1b8ad] bg-[#fff1ee] text-[#c2412d] hover:border-[#c2412d]"
+                        )}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    startNewCard();
+                  }}
+                  aria-label="新增记忆卡"
+                  title="新增记忆卡"
+                  className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border border-[#d8dde6] text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] dark:border-border dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                {deletedHistory.length ? (
+                  <button
+                    type="button"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void restoreLastDeleted();
+                    }}
+                    disabled={isSavingCard || isSavingMeaning || isEditingAny}
+                    aria-label="撤销删除的记忆卡"
+                    title="撤销删除的记忆卡 (⌘Z / Ctrl+Z / Shift+R)"
+                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border border-[#d8dde6] text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] disabled:pointer-events-none disabled:opacity-50 dark:border-border dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onClose();
+                  }}
+                  aria-label="关闭助记卡，快捷键 Esc"
+                  title="关闭助记卡 (Esc)"
+                  className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border border-[#d8dde6] text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] dark:border-border dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            )}
+          </div>
+          {!isEditingAny && mnemonicCards.length > 0 ? (
+            <MnemonicCardTabs
+              cards={mnemonicCards}
+              activeCardId={activeMnemonic?.id ?? ""}
+              onSelect={setActiveMnemonicId}
+              onEdit={startEditCard}
+              onPromote={promoteCard}
+              onDelete={deleteCard}
+              isPointInsideCard={isPointInsideCard}
+              disabled={isSavingCard || isSavingMeaning}
+            />
+          ) : null}
+        </div>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <section
+          className={cn(
+            "memory-card-meaning-panel",
+            effectiveCanEditOfficialCards && !isEditingAny
+              ? "cursor-text transition hover:border-[#c6a46f] hover:bg-[#fffaf1] dark:hover:border-yellow-900/70 dark:hover:bg-yellow-950/20"
+              : ""
+          )}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            startEditMeaning();
+          }}
+          title={effectiveCanEditOfficialCards ? "右键编辑中文释义" : undefined}
+        >
+          {isEditingMeaning ? (
+            <textarea
+              value={meaningDraft}
+              onChange={(event) => setMeaningDraft(event.target.value)}
+              autoFocus
+              disabled={isSavingMeaning}
+              className="memory-card-meaning min-h-32 w-full resize-y rounded-md border border-[#d8dde6] bg-white px-3 py-2 font-semibold leading-8 text-[#171a1f] outline-none transition focus:border-[#171a1f] focus:ring-2 focus:ring-[#171a1f]/10 disabled:opacity-60 dark:border-border dark:bg-card dark:text-foreground dark:focus:border-foreground"
+            />
+          ) : (
+            <div className="memory-card-meaning font-semibold">{word.meaningCn || "释义待补"}</div>
+          )}
+        </section>
+
+        <section className="mt-4 border-t border-[#eef2f6] pt-4 dark:border-border">
+          <div className="text-xs font-semibold tracking-normal text-[#8b93a1] dark:text-muted-foreground">
+            记忆卡
+          </div>
+          {isEditing ? (
+            <div className="mt-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-lg font-semibold text-[#171a1f] dark:text-foreground">
+                  {editingMnemonicId ? "编辑记忆卡" : "新记忆卡"}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={isSavingCard || isUploadingImage}
+                  aria-label="插入图片"
+                  title="插入图片"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[#d8dde6] text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] disabled:pointer-events-none disabled:opacity-50 dark:border-border dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
+                >
+                  {isUploadingImage ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ImagePlus className="h-4 w-4" />
+                  )}
+                </button>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void uploadDraftImage(file);
+                  }}
+                />
+              </div>
+              <MarkdownImageTextarea
+                value={draftContent}
+                onValueChange={setDraftContent}
+                className="min-h-72 resize-y rounded-lg border-[#d8dde6] bg-white p-4 font-sans text-base leading-7 tracking-normal text-[#171a1f] shadow-none dark:border-border dark:bg-card dark:text-foreground"
+                statusClassName="text-[#69717f] dark:text-muted-foreground"
+                placeholder={defaultCustomCardTemplate(word.word)}
+              />
+              <label className="flex h-11 items-center gap-2 rounded-lg border border-[#d8dde6] bg-white px-3 text-[#69717f] focus-within:border-[#171a1f] dark:border-border dark:bg-card dark:text-muted-foreground dark:focus-within:border-foreground">
+                <Link2 className="h-4 w-4 shrink-0" />
+                <input
+                  type="text"
+                  value={relatedWords}
+                  onChange={(event) => setRelatedWords(event.target.value)}
+                  className="h-full min-w-0 flex-1 bg-transparent font-sans text-sm tracking-normal text-[#171a1f] outline-none placeholder:text-[#8b93a1] dark:text-foreground dark:placeholder:text-muted-foreground"
+                  placeholder="相关单词：house, emotion"
+                />
+              </label>
+              {showDraftVisibilityChoice ? (
+                <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#d8dde6] bg-white px-3 py-2 text-sm font-semibold text-[#171a1f] dark:border-border dark:bg-card dark:text-foreground">
+                  <span className="text-[#69717f] dark:text-muted-foreground">保存为</span>
+                  <label className="inline-flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      checked={draftVisibility === "private"}
+                      onChange={() => setDraftVisibility("private")}
+                      className="h-4 w-4 accent-[#171a1f] dark:accent-foreground"
+                    />
+                    私有
+                  </label>
+                  <label className="inline-flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      checked={draftVisibility === "public"}
+                      onChange={() => setDraftVisibility("public")}
+                      className="h-4 w-4 accent-[#171a1f] dark:accent-foreground"
+                    />
+                    公开审核
+                  </label>
+                </div>
+              ) : null}
+              {editorMessage ? (
+                <p className="text-xs leading-5 text-[#69717f] dark:text-muted-foreground">
+                  {editorMessage}
+                </p>
+              ) : null}
+            </div>
+          ) : activeMnemonic ? (
+            <>
+              <h3 className="memory-card-heading mt-2 font-semibold text-[#171a1f] dark:text-foreground">
+                {activeMnemonic.title}
+              </h3>
+              {activeMnemonic.splitText ? (
+                <div className="memory-card-note mt-3 rounded-md border border-[#d8dde6] bg-white px-3 py-2 font-medium text-[#323741] dark:border-border dark:bg-card dark:text-foreground/85">
+                  {activeMnemonic.splitText}
+                </div>
+              ) : null}
+              <div
+                className="memory-card-readable mt-3 text-[#323741] dark:text-foreground/85"
+                onClick={handleMnemonicClick}
+              >
+                <WikiRichText html={activeMnemonic.contentHtml} />
+              </div>
+              {editorMessage ? (
+                <p className="mt-3 text-xs leading-5 text-[#69717f] dark:text-muted-foreground">
+                  {editorMessage}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-3 rounded-md border border-dashed border-[#cbd3df] px-3 py-8 text-center text-sm text-[#69717f] dark:border-border dark:text-muted-foreground">
+              暂无助记卡。
+            </p>
+          )}
+        </section>
+
+        {word.exampleSentence ? (
+          <section className="mt-4 border-t border-[#eef2f6] pt-4 dark:border-border">
+            <div className="text-xs font-semibold tracking-normal text-[#8b93a1] dark:text-muted-foreground">
+              例句
+            </div>
+            <p className="memory-card-note mt-2 text-[#323741] dark:text-foreground/85">
+              {word.exampleSentence}
+            </p>
+            {word.exampleTranslation ? (
+              <p className="memory-card-note mt-1 text-[#69717f] dark:text-muted-foreground">
+                {word.exampleTranslation}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function MnemonicCardTabs({
+  cards,
+  activeCardId,
+  onSelect,
+  onEdit,
+  onPromote,
+  onDelete,
+  isPointInsideCard,
+  disabled
+}: {
+  cards: MnemonicCardItem[];
+  activeCardId: string;
+  onSelect: (cardId: string) => void;
+  onEdit: (cardId: string) => void;
+  onPromote: (cardId: string) => void;
+  onDelete: (cardId: string, previousIndex: number) => void;
+  isPointInsideCard: (clientX: number, clientY: number) => boolean;
+  disabled: boolean;
+}) {
+  type DraggingCardState = {
+    id: string;
+    index: number;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originLeft: number;
+    originTop: number;
+    width: number;
+    height: number;
+    offsetX: number;
+    offsetY: number;
+    isDragging: boolean;
+    isOutside: boolean;
+  };
+  const [draggingCard, setDraggingCard] = useState<DraggingCardState | null>(null);
+  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  const draggingCardRef = useRef<DraggingCardState | null>(null);
+  const dragElementRef = useRef<HTMLButtonElement | null>(null);
+  const skipClickRef = useRef(false);
+
+  useEffect(() => {
+    setPortalRoot(document.body);
+  }, []);
+
+  const setCurrentDraggingCard = (next: DraggingCardState | null) => {
+    draggingCardRef.current = next;
+    setDraggingCard(next);
+  };
+
+  const releaseCardPointerCapture = (pointerId: number) => {
+    const element = dragElementRef.current;
+    if (!element) return;
+    try {
+      if (element.hasPointerCapture(pointerId)) {
+        element.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // Pointer capture may already be gone after blur/cancel; clearing drag state is enough.
+    }
+  };
+
+  const nextCardDragState = (
+    current: DraggingCardState,
+    clientX: number,
+    clientY: number
+  ): DraggingCardState => {
+    const offsetX = clientX - current.startX;
+    const offsetY = clientY - current.startY;
+    const isDragging = current.isDragging || Math.hypot(offsetX, offsetY) > 5;
+
+    return {
+      ...current,
+      offsetX,
+      offsetY,
+      isDragging,
+      isOutside: isDragging && !isPointInsideCard(clientX, clientY)
+    };
+  };
+
+  const updateCardDrag = (pointerId: number, clientX: number, clientY: number) => {
+    const current = draggingCardRef.current;
+    if (!current || current.pointerId !== pointerId) return;
+    setCurrentDraggingCard(nextCardDragState(current, clientX, clientY));
+  };
+
+  const finishCardDrag = (
+    pointerId: number,
+    clientX: number,
+    clientY: number,
+    shouldDelete: boolean
+  ) => {
+    const current = draggingCardRef.current;
+    if (!current || current.pointerId !== pointerId) return;
+
+    const finalState = current.isDragging ? nextCardDragState(current, clientX, clientY) : current;
+    releaseCardPointerCapture(pointerId);
+    dragElementRef.current = null;
+    setCurrentDraggingCard(null);
+
+    if (!finalState.isDragging) return;
+    skipClickRef.current = true;
+    window.setTimeout(() => {
+      skipClickRef.current = false;
+    }, 0);
+
+    if (shouldDelete && finalState.isOutside) {
+      onDelete(finalState.id, finalState.index);
+    }
+  };
+
+  const cancelCardDrag = (pointerId?: number) => {
+    const current = draggingCardRef.current;
+    if (!current) return;
+    if (pointerId !== undefined && current.pointerId !== pointerId) return;
+
+    releaseCardPointerCapture(current.pointerId);
+    dragElementRef.current = null;
+    setCurrentDraggingCard(null);
+    if (current.isDragging) {
+      skipClickRef.current = true;
+      window.setTimeout(() => {
+        skipClickRef.current = false;
+      }, 0);
+    }
+  };
+
+  useEffect(() => {
+    if (draggingCard?.pointerId === undefined) return;
+
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
+      updateCardDrag(event.pointerId, event.clientX, event.clientY);
+    };
+    const handlePointerUp = (event: globalThis.PointerEvent) => {
+      finishCardDrag(event.pointerId, event.clientX, event.clientY, true);
+    };
+    const handlePointerCancel = (event: globalThis.PointerEvent) => {
+      cancelCardDrag(event.pointerId);
+    };
+    const handleWindowBlur = () => {
+      cancelCardDrag();
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, true);
+    window.addEventListener("pointerup", handlePointerUp, true);
+    window.addEventListener("pointercancel", handlePointerCancel, true);
+    window.addEventListener("blur", handleWindowBlur);
+    document.addEventListener("visibilitychange", handleWindowBlur);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove, true);
+      window.removeEventListener("pointerup", handlePointerUp, true);
+      window.removeEventListener("pointercancel", handlePointerCancel, true);
+      window.removeEventListener("blur", handleWindowBlur);
+      document.removeEventListener("visibilitychange", handleWindowBlur);
+    };
+  }, [draggingCard?.pointerId]);
+
+  const startCardDrag = (cardId: string, index: number, event: PointerEvent<HTMLButtonElement>) => {
+    if (disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    dragElementRef.current = event.currentTarget;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // The global pointer listeners below still keep the drag interaction recoverable.
+    }
+    setCurrentDraggingCard({
+      id: cardId,
+      index,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originLeft: rect.left,
+      originTop: rect.top,
+      width: rect.width,
+      height: rect.height,
+      offsetX: 0,
+      offsetY: 0,
+      isDragging: false,
+      isOutside: false
+    });
+  };
+  const moveCardDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    updateCardDrag(event.pointerId, event.clientX, event.clientY);
+  };
+  const stopCardDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    finishCardDrag(event.pointerId, event.clientX, event.clientY, true);
+  };
+
+  return (
+    <>
+      <div className="flex max-w-48 flex-wrap justify-end gap-1 rounded-md border border-[#d8dde6] bg-[#f7f8fb] p-1 dark:border-border dark:bg-muted">
+        {cards.map((card, index) => {
+          const active = card.id === activeCardId;
+          const dragging = draggingCard?.id === card.id ? draggingCard : null;
+          return (
+            <button
+              key={card.id}
+              type="button"
+              disabled={disabled}
+              onPointerDown={(event) => startCardDrag(card.id, index, event)}
+              onPointerMove={moveCardDrag}
+              onPointerUp={stopCardDrag}
+              onPointerCancel={(event) => {
+                event.stopPropagation();
+                cancelCardDrag(event.pointerId);
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (skipClickRef.current) {
+                  skipClickRef.current = false;
+                  return;
+                }
+                onSelect(card.id);
+              }}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                onPromote(card.id);
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onEdit(card.id);
+              }}
+              aria-label={`打开第 ${index + 1} 张记忆卡`}
+              title={
+                card.canEdit
+                  ? "单击切换，双击设为默认，右键编辑；拖出弹窗删除"
+                  : card.sourceType === "OFFICIAL"
+                    ? "单击切换，双击设为我的默认；官方记忆卡不可编辑"
+                    : "单击切换；只能编辑自己的记忆卡"
+              }
+              className={cn(
+                mnemonicTabClassName(active, dragging?.isOutside ?? false),
+                "disabled:pointer-events-none disabled:opacity-50",
+                dragging?.isDragging ? "opacity-0" : "cursor-grab"
+              )}
+            >
+              {index + 1}
+            </button>
+          );
+        })}
+      </div>
+      {portalRoot && draggingCard?.isDragging
+        ? createPortal(
+            <div
+              aria-hidden="true"
+              style={{
+                position: "fixed",
+                left: draggingCard.originLeft + draggingCard.offsetX,
+                top: draggingCard.originTop + draggingCard.offsetY,
+                width: draggingCard.width,
+                height: draggingCard.height,
+                zIndex: 120,
+                pointerEvents: "none"
+              }}
+              className={cn(
+                mnemonicTabClassName(draggingCard.id === activeCardId, draggingCard.isOutside),
+                "cursor-grabbing shadow-lg transition-none"
+              )}
+            >
+              {draggingCard.index + 1}
+            </div>,
+            portalRoot
+          )
+        : null}
+    </>
+  );
+}
+
+function mnemonicTabClassName(active: boolean, deleting: boolean) {
+  return cn(
+    "flex h-8 w-7 touch-none items-center justify-center rounded-[3px] border text-xs font-semibold leading-none transition",
+    active
+      ? "border-[#171a1f] bg-white text-[#171a1f] shadow-sm dark:border-foreground dark:bg-card dark:text-foreground"
+      : "border-[#cbd3df] bg-white/70 text-[#69717f] hover:border-[#171a1f] hover:text-[#171a1f] dark:border-border dark:bg-card/70 dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground",
+    deleting
+      ? "border-[#c2412d] bg-[#fff1ee] text-[#c2412d] shadow-sm dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+      : ""
+  );
+}
+
+type MnemonicCardMutationResult = {
+  word: LevelWordItem | null;
+  activeEntryId: string;
+};
+
+type WordMarkMutationResult = {
+  isBookmarked: boolean;
+  markState: WordMarkState | null;
+};
+
+async function setWordCollectionMark(
+  wordId: string,
+  state: WordMarkState | null,
+  isAuthenticated: boolean
+) {
+  if (!isAuthenticated) {
+    saveGuestWordMarkState(wordId, state);
+    return { isBookmarked: state === "UNKNOWN", markState: state };
+  }
+
+  const response = await fetch("/api/word-marks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ wordId, state })
+  });
+  const result = (await response.json().catch(() => ({}))) as Partial<WordMarkMutationResult> & {
+    error?: string;
+  };
+
+  if (!response.ok) {
+    throw new Error(result.error || "标记失败。");
+  }
+  if (typeof result.isBookmarked !== "boolean" || !("markState" in result)) {
+    throw new Error("标记返回数据不完整。");
+  }
+
+  return result as WordMarkMutationResult;
+}
+
+async function saveMnemonicCard(
+  slug: string,
+  contentMarkdown: string,
+  visibility: "private" | "public"
+) {
+  return mutateMnemonicCard(slug, {
+    action: "create",
+    contentMarkdown,
+    visibility
+  });
+}
+
+async function updateMnemonicCard(
+  slug: string,
+  entryId: string,
+  contentMarkdown: string,
+  visibility: "private" | "public"
+) {
+  return mutateMnemonicCard(slug, {
+    action: "update",
+    entryId,
+    contentMarkdown,
+    visibility
+  });
+}
+
+async function updateWordMeaning(slug: string, meaningCn: string) {
+  return mutateMnemonicCard(slug, {
+    action: "update-meaning",
+    meaningCn
+  });
+}
+
+async function promoteMnemonicCard(slug: string, entryId: string) {
+  return mutateMnemonicCard(slug, {
+    action: "promote",
+    entryId
+  });
+}
+
+async function deleteMnemonicCard(slug: string, entryId: string) {
+  return mutateMnemonicCard(slug, {
+    action: "delete",
+    entryId
+  });
+}
+
+async function restoreMnemonicCard(slug: string, entryId: string, sortOrder: number) {
+  return mutateMnemonicCard(slug, {
+    action: "restore",
+    entryId,
+    sortOrder: String(sortOrder)
+  });
+}
+
+async function mutateMnemonicCard(slug: string, payload: Record<string, string>) {
+  const response = await fetch(`/api/word-card/${encodeURIComponent(slug)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store"
+  });
+  const result = (await response
+    .json()
+    .catch(() => ({}))) as Partial<MnemonicCardMutationResult> & { error?: string };
+
+  if (!response.ok) {
+    throw new Error(result.error || "记忆卡操作失败。");
+  }
+  if (!result.word || typeof result.activeEntryId !== "string") {
+    throw new Error("记忆卡返回数据不完整。");
+  }
+
+  return result as MnemonicCardMutationResult;
+}
+
+function withRelatedWordLinks(content: string, relatedWords: string) {
+  const words = relatedWords
+    .split(/[,，\s]+/)
+    .map((word) => normalizeRelatedWord(word))
+    .filter(Boolean);
+  const cleanContent = stripRelatedWordBlock(content);
+  if (!words.length) return cleanContent;
+
+  const linkBlock = [
+    "",
+    "相关单词：",
+    ...Array.from(new Set(words)).map((word) => `[[word:${word}]]`)
+  ].join("\n");
+  return `${cleanContent.trimEnd()}\n${linkBlock}`;
+}
+
+function editableMnemonicContent(card: MnemonicCardItem) {
+  const content = stripRelatedWordBlock(card.contentMarkdown).trim();
+  if (hasSplitLine(content)) return content;
+  const splitLine = `划分：${card.splitText.trim() ? ` ${card.splitText.trim()}` : ""}`;
+  return [splitLine, content].filter(Boolean).join("\n\n").trim();
+}
+
+function relatedWordText(markdown: string) {
+  return Array.from(
+    new Set(
+      Array.from(markdown.matchAll(/\[\[\s*word\s*:\s*([^|\]\s]+)(?:\|[^\]]+)?\]\]/giu))
+        .map((match) =>
+          String(match[1] ?? "")
+            .trim()
+            .toLowerCase()
+        )
+        .filter(Boolean)
+    )
+  ).join(", ");
+}
+
+function normalizeRelatedWord(word: string) {
+  return word
+    .trim()
+    .replace(/^\[\[\s*word\s*:\s*/iu, "")
+    .replace(/\]\]$/u, "")
+    .trim()
+    .toLowerCase();
+}
+
+function stripRelatedWordBlock(markdown: string) {
+  return markdown.replace(/\n*相关单词[:：][\s\S]*$/u, "").trimEnd();
+}
+
+function hasSplitLine(markdown: string) {
+  return /^\s*划分\s*[:：]/mu.test(markdown);
+}
+
+const MEMORY_CARD_DRAFT_KEY_PREFIX = "mnemonic_memory_card_draft";
+
+type MemoryCardLocalDraft = {
+  content: string;
+  relatedWords: string;
+  visibility: "private" | "public";
+  savedAt: number;
+};
+
+function readMemoryCardDraft(wordId: string, entryId: string | null): MemoryCardLocalDraft | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(memoryCardDraftKey(wordId, entryId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<MemoryCardLocalDraft>;
+    if (typeof parsed.content !== "string") return null;
+    return {
+      content: parsed.content,
+      relatedWords: typeof parsed.relatedWords === "string" ? parsed.relatedWords : "",
+      visibility: parsed.visibility === "public" ? "public" : "private",
+      savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : 0
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveMemoryCardDraft(
+  wordId: string,
+  entryId: string | null,
+  content: string,
+  relatedWords: string,
+  visibility: "private" | "public"
+) {
+  if (typeof window === "undefined" || !wordId) return;
+
+  window.localStorage.setItem(
+    memoryCardDraftKey(wordId, entryId),
+    JSON.stringify({
+      content,
+      relatedWords,
+      visibility,
+      savedAt: Date.now()
+    })
+  );
+}
+
+function clearMemoryCardDraft(wordId: string, entryId: string | null) {
+  if (typeof window === "undefined" || !wordId) return;
+  window.localStorage.removeItem(memoryCardDraftKey(wordId, entryId));
+}
+
+function memoryCardDraftKey(wordId: string, entryId: string | null) {
+  return `${MEMORY_CARD_DRAFT_KEY_PREFIX}:${wordId}:${entryId ?? "new"}`;
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function pronunciationAudioCandidates(word: string) {
+  const trimmedWord = word.trim();
+  const dictionaryWord = trimmedWord
+    .toLowerCase()
+    .replace(/[^a-z'-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!dictionaryWord) return [];
+
+  return [
+    `https://ssl.gstatic.com/dictionary/static/sounds/20200429/${encodeURIComponent(dictionaryWord)}--_us_1.mp3`,
+    `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(trimmedWord)}&type=2`
+  ];
+}
+
+async function playAudioUrl(
+  audioUrl: string,
+  activeAudioRef: { current: HTMLAudioElement | null }
+) {
+  activeAudioRef.current?.pause();
+
+  const audio = new Audio(audioUrl);
+  activeAudioRef.current = audio;
+
+  try {
+    await audio.play();
+  } catch (error) {
+    if (activeAudioRef.current === audio) {
+      activeAudioRef.current = null;
+    }
+    throw error;
+  }
+}
+
+function speakWord(word: string) {
+  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
+
+  window.speechSynthesis.cancel();
+  const utterance = new window.SpeechSynthesisUtterance(word);
+  utterance.lang = "en-US";
+  utterance.rate = 0.9;
+
+  const voices = window.speechSynthesis.getVoices();
+  const preferredVoice =
+    voices.find((voice) => voice.lang.toLowerCase().startsWith("en-us")) ??
+    voices.find((voice) => voice.lang.toLowerCase().startsWith("en"));
+  if (preferredVoice) utterance.voice = preferredVoice;
+
+  window.speechSynthesis.speak(utterance);
+}
+
+function defaultCustomCardTemplate(word: string) {
+  return `划分：${word}\n\n带你背：`;
+}
+
+function cardPermissionMessage(card: MnemonicCardItem) {
+  if (card.sourceType === "OFFICIAL") {
+    return "官方已有记忆卡只能由编辑员修改。普通账号可以点铅笔新建自己的记忆卡。";
+  }
+
+  return "只能编辑自己创建的记忆卡。";
+}

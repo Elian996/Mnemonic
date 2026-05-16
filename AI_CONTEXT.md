@@ -232,6 +232,84 @@ Spot-checks alone are not enough. Screenshots caught severe issues after earlier
 - Playwright
 - Local dev server script: `npm run dev` uses port `3001`
 
+## Production Server Access
+
+This project is deployed on the user's Tencent Cloud Lighthouse server. Future AI agents may use this section to connect and operate the server when the user asks for deployment, database migration, logs, or production debugging.
+
+Do not write private keys, database passwords, `.env` contents, or dump files into Git. The information below intentionally includes only connection metadata, a local private-key path, and the registered public key.
+
+Server:
+
+- Provider: Tencent Cloud Lighthouse
+- OS: Ubuntu 22.04
+- Public IP: `124.221.123.13`
+- SSH user: `ubuntu`
+- SSH private key path on the user's Mac: `/Users/mr.mao/Downloads/123.pem`
+- Registered SSH public key:
+
+```text
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCYlDj8rPeV8tHO6C01IhsXV1T13Qfbj+7XHvZvoSJQ+yqdwGbA1OHbBVmev/6sO7+4k0R+SRRBbt/d8c8vWibp3tkTN5axjEoAnX/y7KqWtjW92g3D+ruXkqpe2adGA7djMsOTVtwjt1zB7RDp7NzG+w66v+7aRqFX5uUtEQ4RibNoDEnvZ4Jfx5+VyjQMh7jgVSW7xNrZIfpgRBhCHKnSKtFmLJhGezv8OBaU4hAqAXa9IowGzffPV+ojeUBYPYNLBMMyA22Q+Iq/1eSgKtnRlaw9dDmIsqthUZLDWx5vfZFhzWZhuuvAT4KsPkMT6LHOj+YRhiEocBg7Hvs6+Kc9 skey-9yox8hu9
+```
+
+SSH command:
+
+```bash
+ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13
+```
+
+Server app layout:
+
+- Project directory: `/home/ubuntu/Mnemonic`
+- Public site: `http://124.221.123.13:3000`
+- GitHub repo: `https://github.com/Elian996/Mnemonic`
+- Systemd service: `mnemonic.service`
+- App port: `3000`
+- Production app start command in systemd: `npm run start -- -H 0.0.0.0 -p 3000`
+- Current production URL env: `NEXT_PUBLIC_APP_URL=http://124.221.123.13:3000`
+
+Common production commands:
+
+```bash
+ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'cd ~/Mnemonic && git status --short'
+ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'sudo systemctl status mnemonic --no-pager --full'
+ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'cd ~/Mnemonic && npm run build && sudo systemctl restart mnemonic'
+ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'journalctl -u mnemonic -n 120 --no-pager'
+```
+
+Database:
+
+- Server database is local PostgreSQL on `127.0.0.1:5432`.
+- Database name: `mnemonic`.
+- Database URL is stored only in `/home/ubuntu/Mnemonic/.env`; do not copy the password into docs or chat unless the user explicitly asks.
+- The server has PostgreSQL 14 installed, while local dumps may come from PostgreSQL 16. Use the Docker `postgres:16-alpine` client for PG16 custom-format dump restore.
+
+Safe DB command pattern:
+
+```bash
+ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
+  'cd ~/Mnemonic && set -a && . ./.env && set +a && DBURL=${DATABASE_URL%\?schema=public} && psql "$DBURL" -c "select count(*) from \"Word\";"'
+```
+
+Production data notes from 2026-05-16:
+
+- Local database dump restored to the server successfully.
+- After restore, server counts were approximately: `Word=41730`, `MnemonicEntry=7867`, `MemoryNode=8755`, `MemoryLink=7300`, `User=7`, `ImportDraft=13469`.
+- `public/uploads/` is intentionally ignored by Git. When migrating/restoring DB content that references uploaded images, sync uploads separately:
+
+```bash
+rsync -av --ignore-existing \
+  -e 'ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes' \
+  public/uploads/ ubuntu@124.221.123.13:/home/ubuntu/Mnemonic/public/uploads/
+
+ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'sudo systemctl restart mnemonic'
+```
+
+Important production gotchas:
+
+- The site currently runs over plain HTTP. Session cookies must not be forced to `Secure` unless `NEXT_PUBLIC_APP_URL` is HTTPS.
+- Official mnemonic cards can only be edited by `EDITOR` or `ADMIN`; normal users can create and edit their own cards.
+- Uploaded images in mnemonic cards are file assets under `public/uploads/`; database restore alone is not enough to display them.
+
 Common commands:
 
 ```bash

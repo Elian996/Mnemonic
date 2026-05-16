@@ -25,7 +25,7 @@ export async function createSession(userId: string) {
   }), {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureSessionCookie(),
     maxAge: MAX_AGE,
     path: "/"
   });
@@ -104,6 +104,17 @@ function secureEqual(left: string, right: string) {
 
 function encodeBase64Url(value: string) {
   return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function shouldUseSecureSessionCookie() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!appUrl) return process.env.NODE_ENV === "production";
+
+  try {
+    return new URL(appUrl).protocol === "https:";
+  } catch {
+    return process.env.NODE_ENV === "production";
+  }
 }
 
 function sessionSecret() {

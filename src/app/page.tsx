@@ -1,106 +1,58 @@
 import Link from "next/link";
-import { ArrowRight, BookOpen } from "lucide-react";
-import { LogoMark } from "@/components/logo";
-import { NightCoverEyes } from "@/components/night-cover-eyes";
+import { ArrowRight } from "lucide-react";
 import { prisma } from "@/lib/db";
 
 export default async function HomePage() {
   const wordCount = await prisma.word.count();
 
   return (
-    <>
-      <main className="mn-page mn-home-cover home-light-cover min-h-screen overflow-hidden">
-        <header className="home-cover-frame home-cover-header">
-          <Link href="/" className="home-cover-brand" aria-label="mnemonic 首页">
-            <LogoMark className="home-cover-brand-mark" />
-            <span className="home-cover-brand-text">mnemonic</span>
-          </Link>
-          <div aria-hidden />
-        </header>
-
-        <section className="home-cover-frame home-cover-hero">
-          <div className="home-cover-left">
-            <span className="home-cover-red" aria-hidden />
-            <h1 className="home-cover-title">
-              MNE
-              <br />
-              MO
-              <br />
-              NIC
-            </h1>
-            <div className="home-cover-copy">
-              <p className="home-cover-copy-title">
-                用词链
-                <br />
-                记住英语单词
-              </p>
-              <p className="home-cover-copy-text">
-                以词链连接记忆碎片，把每个单词，变成长期记得住的知识。
-              </p>
-              <Link
-                href="/words"
-                className="home-cover-card group transition hover:-translate-y-0.5 hover:bg-black"
-              >
-                <span className="home-cover-card-main">
-                  <span className="home-cover-card-icon">
-                    <BookOpen className="home-cover-card-book" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="home-cover-card-title">单词</span>
-                    <span className="home-cover-card-count">
-                      {wordCount.toLocaleString("zh-CN")} words
-                    </span>
-                  </span>
-                </span>
-                <ArrowRight className="home-cover-card-arrow transition group-hover:translate-x-1 group-hover:text-white" />
-              </Link>
-            </div>
-          </div>
-
-          <div className="home-cover-middle">
-            <div className="home-cover-words">
-              WORDS.
-              <br />
-              CONNECT.
-              <br />
-              REMEMBER.
-            </div>
-            <div className="home-cover-dots" aria-hidden />
-          </div>
-
-          <div className="home-cover-art">
-            <div className="home-cover-art-canvas">
-              <img src="/mnemonic-cover-art.png" alt="mnemonic 立体主义字母 M 插画" />
-              <span className="home-cover-eye home-cover-eye-left" aria-hidden />
-              <span className="home-cover-eye home-cover-eye-right" aria-hidden />
-            </div>
-          </div>
-
-          <aside className="home-cover-scroll">
-            <span className="home-cover-scroll-text">SCROLL</span>
-            <span className="home-cover-scroll-line" aria-hidden />
-          </aside>
-        </section>
-
-        <div className="home-cover-frame home-cover-bottom-blank" aria-hidden />
-      </main>
-
-      <main className="mn-night-home home-night-cover">
-        <h1 hidden>mnemonic | 用词链记住英语单词</h1>
-        <div className="night-cover-stage" aria-hidden>
-          <NightCoverEyes />
-        </div>
-        <Link
-          href="/words"
-          className="night-cover-entry"
-          aria-label={`进入单词库，当前 ${wordCount.toLocaleString("zh-CN")} 个单词`}
-        >
-          <BookOpen className="h-4 w-4" />
-          <span>单词</span>
-          <span>{wordCount.toLocaleString("zh-CN")}</span>
-          <ArrowRight className="h-4 w-4" />
+    <main className="mn-home-showcase">
+      <header className="mn-showcase-header">
+        <Link href="/" className="mn-showcase-brand" aria-label="mnemonic 首页">
+          mnemonic
         </Link>
-      </main>
-    </>
+      </header>
+
+      <section className="mn-showcase-hero" aria-labelledby="home-cover-title">
+        <div className="mn-showcase-copy">
+          <h1 id="home-cover-title" className="mn-showcase-title">
+            mnemonic
+          </h1>
+          <span className="mn-showcase-rule" aria-hidden />
+          <p className="mn-showcase-tagline">用词链，记住英语单词</p>
+          <p className="mn-showcase-description">
+            以词链连接记忆碎片，把每个单词，
+            <br />
+            变成长久记得住的知识。
+          </p>
+          <Link
+            href="/words"
+            className="mn-showcase-cta group"
+            aria-label={`开始记忆，进入 ${wordCount.toLocaleString("zh-CN")} 个单词`}
+          >
+            <span>开始记忆</span>
+            <ArrowRight className="mn-showcase-cta-icon" aria-hidden />
+          </Link>
+        </div>
+
+        <div className="mn-showcase-art" aria-hidden>
+          <span className="mn-showcase-orbit mn-showcase-orbit-wide" />
+          <span className="mn-showcase-orbit mn-showcase-orbit-tall" />
+          <span className="mn-showcase-line mn-showcase-line-horizontal" />
+          <span className="mn-showcase-line mn-showcase-line-vertical" />
+          <span className="mn-showcase-disc mn-showcase-disc-small" />
+          <span className="mn-showcase-disc mn-showcase-disc-large" />
+          <span className="mn-showcase-dot mn-showcase-dot-left" />
+          <span className="mn-showcase-dot mn-showcase-dot-top" />
+          <span className="mn-showcase-dot mn-showcase-dot-right" />
+          <span className="mn-showcase-letter">M</span>
+        </div>
+
+        <aside className="mn-showcase-scroll" aria-hidden>
+          <span>SCROLL</span>
+          <i />
+        </aside>
+      </section>
+    </main>
   );
 }

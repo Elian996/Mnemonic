@@ -1,19 +1,18 @@
 import Link from "next/link";
-import { BookOpen, ChevronRight } from "lucide-react";
 import { UserRole } from "@prisma/client";
-import { HiddenRepositoryGate } from "@/components/hidden-repository-gate";
 import { PublicTopBar } from "@/components/public-top-bar";
 import { WordMemorySearch } from "@/components/word-memory-search";
 import { getSessionUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { hasRole } from "@/lib/permissions";
 import { vocabCategories } from "@/lib/vocab-categories";
-import { InteriorContainer, InteriorHero, InteriorPage } from "@/components/interior-shell";
+import { InteriorPage } from "@/components/interior-shell";
+
+const wordPageLevelOrder = ["LEVEL_2", "LEVEL_3", "GAOKAO_3500", "CET4", "CET6"];
 
 export default async function WordsPage() {
-  const [user, totalCount, counts] = await Promise.all([
+  const [user, counts] = await Promise.all([
     getSessionUser(),
-    prisma.word.count(),
     Promise.all(
       vocabCategories.map(async (category) => ({
         tag: category.tag,
@@ -22,10 +21,13 @@ export default async function WordsPage() {
     )
   ]);
   const countByTag = Object.fromEntries(counts.map((item) => [item.tag, item.count]));
+  const orderedCategories = wordPageLevelOrder
+    .map((tag) => vocabCategories.find((category) => category.tag === tag))
+    .filter((category): category is (typeof vocabCategories)[number] => Boolean(category));
   const canEditOfficial = hasRole(user, UserRole.EDITOR);
 
   return (
-    <InteriorPage>
+    <InteriorPage className="mn-words-page">
       <PublicTopBar
         user={user}
         breadcrumbs={[
@@ -35,35 +37,41 @@ export default async function WordsPage() {
         rightSlot={<WordMemorySearch isAuthenticated={Boolean(user)} canEditOfficialCards={canEditOfficial} />}
       />
 
-      <InteriorContainer>
-        <InteriorHero
-          eyebrow="words"
-          title={<HiddenRepositoryGate>单词</HiddenRepositoryGate>}
-          description={`按词汇阶段进入对应页面。当前词库共 ${totalCount.toLocaleString("zh-CN")} 个单词。`}
-          meta="选择阶段，开始一组单词"
-        >
-          <BookOpen className="h-16 w-16 text-[var(--mn-red)]" />
-        </InteriorHero>
+      <section className="mn-showcase-words" aria-labelledby="words-page-title">
+        <div className="mn-words-body">
+          <div className="mn-words-copy">
+            <h1 id="words-page-title" className="mn-words-title">
+              单词
+            </h1>
+            <span className="mn-words-rule" aria-hidden />
+            <p className="mn-words-tagline">用词链，记住英语单词</p>
+            <p className="mn-words-description">
+              以词链连接记忆碎片，把每个单词，
+              <br />
+              变成长久记得住的知识。
+            </p>
+          </div>
 
-        <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {vocabCategories.map((category) => (
-            <Link
-              key={category.tag}
-              href={category.href}
-              className="mn-link-card group flex min-h-44 flex-col justify-between p-5"
-            >
-              <span>
-                <span className="block font-serif text-3xl font-semibold tracking-normal">{category.label}</span>
-                <span className="mt-3 block text-sm leading-6 text-[var(--mn-muted)]">{category.description}</span>
-              </span>
-              <span className="mt-6 flex items-center justify-between text-sm font-semibold">
-                <span className="text-[var(--mn-red)]">{(countByTag[category.tag] ?? 0).toLocaleString("zh-CN")} 词</span>
-                <ChevronRight className="h-4 w-4 text-[var(--mn-muted)] transition group-hover:translate-x-0.5 group-hover:text-[var(--mn-ink)]" />
-              </span>
-            </Link>
-          ))}
+          <div className="mn-words-watermark" aria-hidden>
+            M
+          </div>
         </div>
-      </InteriorContainer>
+
+        <nav className="mn-words-levels" aria-label="按词表开始记忆">
+          {orderedCategories.map((category, index) => (
+            <span key={category.tag} className="mn-words-level-wrap">
+              <Link
+                href={category.href}
+                className="mn-words-level"
+                aria-label={`${category.label}，${(countByTag[category.tag] ?? 0).toLocaleString("zh-CN")} 词`}
+              >
+                {category.shortLabel}
+              </Link>
+              {index < orderedCategories.length - 1 ? <span className="mn-words-connector" aria-hidden /> : null}
+            </span>
+          ))}
+        </nav>
+      </section>
     </InteriorPage>
   );
 }

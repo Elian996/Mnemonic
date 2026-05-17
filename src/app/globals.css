@@ -453,11 +453,28 @@ body {
   width: 1px;
 }
 
+.mn-words-page {
+  --cover-bg: #f4f0e8;
+  --cover-ink: #242321;
+  --cover-muted: #69635b;
+  --cover-line: #d6cec1;
+  --cover-accent: #cc3d3f;
+  background:
+    linear-gradient(90deg, rgb(36 35 33 / 0.018) 1px, transparent 1px),
+    linear-gradient(0deg, rgb(36 35 33 / 0.015) 1px, transparent 1px),
+    var(--cover-bg);
+  background-size:
+    120px 100%,
+    100% 110px,
+    auto;
+  color: var(--cover-ink);
+}
+
 .mn-showcase-words {
   border-top: 1px solid var(--cover-line);
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: calc(100vh - 76px);
   overflow: hidden;
   padding: 52px 68px 70px;
   position: relative;
@@ -523,7 +540,7 @@ body {
 .mn-words-title {
   color: #050505;
   font-family: "Songti SC", "STSong", "SimSun", Georgia, serif;
-  font-size: clamp(5.7rem, 7.8vw, 7.5rem);
+  font-size: 7.5rem;
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1;
@@ -558,7 +575,7 @@ body {
 .mn-words-watermark {
   color: rgb(36 35 33 / 0.07);
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(17rem, 24vw, 25rem);
+  font-size: 25rem;
   font-weight: 500;
   justify-self: end;
   letter-spacing: 0;
@@ -699,6 +716,19 @@ body {
   display: none;
 }
 
+:root.dark .mn-words-page,
+:root[data-theme="dark"] .mn-words-page {
+  --cover-bg: #131313;
+  --cover-ink: #eee7d8;
+  --cover-muted: rgb(238 231 216 / 0.58);
+  --cover-line: rgb(238 231 216 / 0.11);
+  --cover-accent: #d8ae78;
+  background:
+    linear-gradient(90deg, rgb(238 231 216 / 0.015) 1px, transparent 1px),
+    linear-gradient(0deg, rgb(238 231 216 / 0.012) 1px, transparent 1px),
+    var(--cover-bg);
+}
+
 :root.dark .mn-showcase-words,
 :root[data-theme="dark"] .mn-showcase-words {
   background:
@@ -752,6 +782,18 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] .mn-words-page {
+    --cover-bg: #131313;
+    --cover-ink: #eee7d8;
+    --cover-muted: rgb(238 231 216 / 0.58);
+    --cover-line: rgb(238 231 216 / 0.11);
+    --cover-accent: #d8ae78;
+    background:
+      linear-gradient(90deg, rgb(238 231 216 / 0.015) 1px, transparent 1px),
+      linear-gradient(0deg, rgb(238 231 216 / 0.012) 1px, transparent 1px),
+      var(--cover-bg);
+  }
+
   :root[data-theme="system"] .mn-showcase-title {
     text-shadow: 0 24px 52px rgb(0 0 0 / 0.52);
   }
@@ -890,7 +932,7 @@ body {
   }
 
   .mn-words-watermark {
-    font-size: clamp(15rem, 23vw, 20rem);
+    font-size: 20rem;
   }
 
   .mn-words-level {
@@ -1019,7 +1061,7 @@ body {
   }
 
   .mn-showcase-words {
-    min-height: 100svh;
+    min-height: calc(100svh - 76px);
     padding: 28px 26px 36px;
   }
 

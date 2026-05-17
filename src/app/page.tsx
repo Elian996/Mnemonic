@@ -1,14 +1,6 @@
 import Link from "next/link";
-import { ArrowRight, Menu } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { prisma } from "@/lib/db";
-
-const wordLevelLinks = [
-  { label: "二级", href: "/levels/level-2" },
-  { label: "三级", href: "/levels/level-3" },
-  { label: "高考3500", href: "/levels/gaokao-3500" },
-  { label: "四级", href: "/levels/cet4" },
-  { label: "六级", href: "/levels/cet6" }
-];
 
 export default async function HomePage() {
   const wordCount = await prisma.word.count();
@@ -60,47 +52,6 @@ export default async function HomePage() {
           <span>SCROLL</span>
           <i />
         </aside>
-      </section>
-
-      <section className="mn-showcase-words" aria-labelledby="home-words-title">
-        <header className="mn-words-nav" aria-label="单词页面导航">
-          <Link href="/" className="mn-words-brand" aria-label="mnemonic 首页">
-            mnemonic
-          </Link>
-          <Link href="/words" className="mn-words-menu" aria-label="进入单词库">
-            <Menu aria-hidden />
-          </Link>
-        </header>
-
-        <div className="mn-words-body">
-          <div className="mn-words-copy">
-            <h2 id="home-words-title" className="mn-words-title">
-              单词
-            </h2>
-            <span className="mn-words-rule" aria-hidden />
-            <p className="mn-words-tagline">用词链，记住英语单词</p>
-            <p className="mn-words-description">
-              以词链连接记忆碎片，把每个单词，
-              <br />
-              变成长久记得住的知识。
-            </p>
-          </div>
-
-          <div className="mn-words-watermark" aria-hidden>
-            M
-          </div>
-        </div>
-
-        <nav className="mn-words-levels" aria-label="按词表开始记忆">
-          {wordLevelLinks.map((item, index) => (
-            <span key={item.href} className="mn-words-level-wrap">
-              <Link href={item.href} className="mn-words-level">
-                {item.label}
-              </Link>
-              {index < wordLevelLinks.length - 1 ? <span className="mn-words-connector" aria-hidden /> : null}
-            </span>
-          ))}
-        </nav>
       </section>
     </main>
   );

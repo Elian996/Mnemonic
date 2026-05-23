@@ -1,9 +1,11 @@
 import crypto from "node:crypto";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { MnemonicSourceType, MnemonicStatus, UserRole } from "@prisma/client";
+import { MnemonicSourceType, MnemonicStatus, Prisma, UserRole, type LevelTag } from "@prisma/client";
+import { ArrowLeft } from "lucide-react";
 import { PublicTopBar } from "@/components/public-top-bar";
 import { LevelWordBrowser, type LevelWordItem } from "@/components/level-word-browser";
+import { DesktopModeOnly, MobileModeOnly } from "@/components/responsive-mode-switch";
 import { WordMemorySearch } from "@/components/word-memory-search";
 import { WordMarkSaveButton } from "@/components/word-mark-save-button";
 import { UsageManualButton } from "@/components/usage-manual-button";
@@ -11,9 +13,27 @@ import { getSessionUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { hasRole } from "@/lib/permissions";
 import { vocabCategories } from "@/lib/vocab-categories";
-import { InteriorContainer, InteriorHero, InteriorPage } from "@/components/interior-shell";
+import { InteriorContainer, InteriorPage } from "@/components/interior-shell";
 
 const pageSize = 96;
+
+type LevelRouteCategory = {
+  tag: LevelTag | null;
+  slug: string;
+  label: string;
+  shortLabel: string;
+  description: string;
+  href: string;
+};
+
+const randomCategory: LevelRouteCategory = {
+  tag: null,
+  slug: "random",
+  label: "随机",
+  shortLabel: "随机",
+  description: "从全部单词里随机混合抽取，不按词库标签分类。",
+  href: "/levels/random"
+};
 
 export default async function LevelPage({
   params,
@@ -24,11 +44,13 @@ export default async function LevelPage({
 }) {
   const [{ level }, sp, sessionUser] = await Promise.all([params, searchParams, getSessionUser()]);
   const user = sessionUser;
-  const category = vocabCategories.find((item) => item.slug === level);
+  const category: LevelRouteCategory | undefined =
+    level === randomCategory.slug ? randomCategory : vocabCategories.find((item) => item.slug === level);
   if (!category) notFound();
 
   const sort: "random" | "az" | "za" = sp.sort === "az" || sp.sort === "za" ? sp.sort : "random";
   const canEditOfficial = hasRole(user, UserRole.EDITOR);
+  const canExportMemoryCardImages = hasRole(user, UserRole.ADMIN);
   const providedRandomSeed = typeof sp.seed === "string" ? sp.seed.trim().slice(0, 64) : "";
   const requestedPage = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
   if (sort === "random" && !providedRandomSeed) {
@@ -37,18 +59,26 @@ export default async function LevelPage({
     redirect(`/levels/${category.slug}?${query.toString()}`);
   }
   const randomSeed = sort === "random" ? providedRandomSeed : "";
-  const where = { levelTags: { has: category.tag } };
-  const allWords = await prisma.word.findMany({
-    where,
-    select: {
-      id: true,
-      word: true,
-      slug: true
-    }
-  });
+  const where: Prisma.WordWhereInput = category.tag ? { levelTags: { has: category.tag } } : {};
+  let allWords: { id: string; word: string; slug: string }[];
+  try {
+    allWords = await prisma.word.findMany({
+      where,
+      select: {
+        id: true,
+        word: true,
+        slug: true
+      }
+    });
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) return <LevelDatabaseUnavailablePage category={category} user={user} />;
+    throw error;
+  }
   const wordMarks = user
     ? await prisma.wordMark.findMany({
-        where: { userId: user.id, wordId: { in: allWords.map((word) => word.id) } },
+        where: category.tag
+          ? { userId: user.id, wordId: { in: allWords.map((word) => word.id) } }
+          : { userId: user.id },
         select: { wordId: true, state: true }
       })
     : [];
@@ -90,7 +120,10 @@ export default async function LevelPage({
                     { authorId: user.id, sourceType: { not: MnemonicSourceType.OFFICIAL } }
                   ]
                 }
-              : { sourceType: MnemonicSourceType.OFFICIAL, status: { not: MnemonicStatus.ARCHIVED } },
+              : {
+                  sourceType: MnemonicSourceType.OFFICIAL,
+                  status: { not: MnemonicStatus.ARCHIVED }
+                },
             select: {
               id: true,
               authorId: true,
@@ -133,17 +166,23 @@ export default async function LevelPage({
     markState: markByWordId.get(word.id) ?? null,
     isBookmarked: word.bookmarks.length > 0 || markByWordId.get(word.id) === "UNKNOWN",
     canEditOfficialCards: canEditOfficial,
-    mnemonics: [...word.mnemonicEntries].sort((first, second) => compareMnemonicEntries(first, second, user?.id ?? null)).map((entry) => ({
-      id: entry.id,
-      title: entry.title,
-      splitText: entry.splitText || "",
-      contentMarkdown: entry.contentMarkdown,
-      contentHtml: entry.contentHtml,
-      plainText: entry.plainText,
-      sourceType: entry.sourceType,
-      status: entry.status,
-      canEdit: entry.sourceType === MnemonicSourceType.OFFICIAL ? canEditOfficial : entry.authorId === user?.id || hasRole(user, UserRole.ADMIN)
-    }))
+    canExportMemoryCardImages,
+    mnemonics: [...word.mnemonicEntries]
+      .sort((first, second) => compareMnemonicEntries(first, second, user?.id ?? null))
+      .map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        splitText: entry.splitText || "",
+        contentMarkdown: entry.contentMarkdown,
+        contentHtml: entry.contentHtml,
+        plainText: entry.plainText,
+        sourceType: entry.sourceType,
+        status: entry.status,
+        canEdit:
+          entry.sourceType === MnemonicSourceType.OFFICIAL
+            ? canEditOfficial
+            : entry.authorId === user?.id || hasRole(user, UserRole.ADMIN)
+      }))
   }));
   const pageHref = (page: number) => {
     const query = new URLSearchParams();
@@ -154,30 +193,61 @@ export default async function LevelPage({
   };
 
   return (
-    <InteriorPage>
-      <PublicTopBar
-        user={user}
-        breadcrumbs={[
-          { label: "首页", href: "/" },
-          { label: "单词", href: "/words" },
-          { label: category.label }
-        ]}
-        actionsSlot={
-          <>
-            <UsageManualButton />
-            <WordMarkSaveButton />
-          </>
-        }
-        rightSlot={<WordMemorySearch isAuthenticated={Boolean(user)} canEditOfficialCards={canEditOfficial} />}
-      />
-
-      <InteriorContainer wide>
-        <InteriorHero
-          eyebrow="level"
-          title={category.label}
-          description={category.description}
-          meta={`${totalCount.toLocaleString("zh-CN")} 词 / 第 ${currentPage} 页，共 ${totalPages} 页`}
+    <InteriorPage className="mn-level-page">
+      <DesktopModeOnly>
+        <PublicTopBar
+          user={user}
+          breadcrumbs={[
+            { label: "首页", href: "/" },
+            { label: category.label }
+          ]}
+          actionsSlot={
+            <>
+              <UsageManualButton />
+              <WordMarkSaveButton />
+            </>
+          }
+          rightSlot={
+            <WordMemorySearch
+              isAuthenticated={Boolean(user)}
+              canEditOfficialCards={canEditOfficial}
+              canExportMemoryCardImages={canExportMemoryCardImages}
+            />
+          }
         />
+      </DesktopModeOnly>
+
+      <MobileModeOnly>
+        <header className="mn-mobile-level-top">
+          <Link href="/" className="mn-mobile-level-back" aria-label="返回首页">
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+          </Link>
+          <div className="min-w-0">
+            <p className="mn-mobile-level-title">{category.label}</p>
+            <p className="mn-mobile-level-meta">
+              {totalCount.toLocaleString("zh-CN")} 词 / 第 {currentPage} / {totalPages} 页
+            </p>
+          </div>
+          <WordMarkSaveButton />
+        </header>
+      </MobileModeOnly>
+
+      <InteriorContainer wide className="mn-level-container">
+        <DesktopModeOnly>
+          <section className="mn-level-hero" aria-labelledby="mn-level-title">
+            <div className="mn-level-hero-copy">
+              <p className="mn-level-eyebrow">{category.tag ? "level" : "random"}</p>
+              <h1 id="mn-level-title" className="mn-level-title">
+                {category.label}
+              </h1>
+              <p className="mn-level-description">{category.description}</p>
+            </div>
+            <div className="mn-level-meta" aria-label="词库进度">
+              <span>{totalCount.toLocaleString("zh-CN")} 词</span>
+              <span>第 {currentPage} / {totalPages} 页</span>
+            </div>
+          </section>
+        </DesktopModeOnly>
 
         <LevelWordBrowser
           words={items}
@@ -186,26 +256,37 @@ export default async function LevelPage({
           isAuthenticated={Boolean(user)}
           defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
           canEditOfficialCards={canEditOfficial}
+          canExportMemoryCardImages={canExportMemoryCardImages}
         />
 
         {totalPages > 1 ? (
-          <nav className="mt-8 grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-sm font-semibold">
+          <nav className="mn-level-pagination mt-8 grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-sm font-semibold">
             {currentPage > 1 ? (
-              <Link className="justify-self-start rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-4 py-2 transition hover:border-[var(--mn-ink)]" href={pageHref(currentPage - 1)}>
+              <Link
+                className="justify-self-start rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-4 py-2 transition hover:border-[var(--mn-ink)]"
+                href={pageHref(currentPage - 1)}
+              >
                 上一页
               </Link>
             ) : (
-              <span className="justify-self-start rounded-md border border-[var(--mn-line)] px-4 py-2 text-[var(--mn-muted)] opacity-50">上一页</span>
+              <span className="justify-self-start rounded-md border border-[var(--mn-line)] px-4 py-2 text-[var(--mn-muted)] opacity-50">
+                上一页
+              </span>
             )}
             <span className="rounded-full border border-[var(--mn-line)] bg-[var(--mn-panel)] px-4 py-2 text-xs font-semibold text-[var(--mn-muted)] sm:text-sm">
               第 {currentPage} / {totalPages} 页
             </span>
             {currentPage < totalPages ? (
-              <Link className="justify-self-end rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-4 py-2 transition hover:border-[var(--mn-ink)]" href={pageHref(currentPage + 1)}>
+              <Link
+                className="justify-self-end rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-4 py-2 transition hover:border-[var(--mn-ink)]"
+                href={pageHref(currentPage + 1)}
+              >
                 下一页
               </Link>
             ) : (
-              <span className="justify-self-end rounded-md border border-[var(--mn-line)] px-4 py-2 text-[var(--mn-muted)] opacity-50">下一页</span>
+              <span className="justify-self-end rounded-md border border-[var(--mn-line)] px-4 py-2 text-[var(--mn-muted)] opacity-50">
+                下一页
+              </span>
             )}
           </nav>
         ) : null}
@@ -249,7 +330,11 @@ type MnemonicOrderEntry = {
   userCardOrders?: { sortOrder: number }[];
 };
 
-function compareMnemonicEntries(first: MnemonicOrderEntry, second: MnemonicOrderEntry, userId: string | null) {
+function compareMnemonicEntries(
+  first: MnemonicOrderEntry,
+  second: MnemonicOrderEntry,
+  userId: string | null
+) {
   const firstPersonalOrder = first.userCardOrders?.[0]?.sortOrder ?? null;
   const secondPersonalOrder = second.userCardOrders?.[0]?.sortOrder ?? null;
   if (firstPersonalOrder !== null || secondPersonalOrder !== null) {
@@ -268,8 +353,63 @@ function compareMnemonicEntries(first: MnemonicOrderEntry, second: MnemonicOrder
   return first.id.localeCompare(second.id);
 }
 
-function mnemonicDisplayGroup(entry: { authorId: string; sourceType: MnemonicSourceType }, userId: string | null) {
-  if (userId && entry.authorId === userId && entry.sourceType !== MnemonicSourceType.OFFICIAL) return 0;
+function mnemonicDisplayGroup(
+  entry: { authorId: string; sourceType: MnemonicSourceType },
+  userId: string | null
+) {
+  if (userId && entry.authorId === userId && entry.sourceType !== MnemonicSourceType.OFFICIAL)
+    return 0;
   if (entry.sourceType === MnemonicSourceType.OFFICIAL) return 1;
   return 2;
+}
+
+function LevelDatabaseUnavailablePage({
+  category,
+  user
+}: {
+  category: LevelRouteCategory;
+  user: Awaited<ReturnType<typeof getSessionUser>>;
+}) {
+  return (
+    <InteriorPage className="mn-level-page">
+      <PublicTopBar
+        user={user}
+        breadcrumbs={[
+          { label: "首页", href: "/" },
+          { label: category.label }
+        ]}
+      />
+      <InteriorContainer>
+        <section className="mn-level-hero" aria-labelledby="mn-level-unavailable-title">
+          <div className="mn-level-hero-copy">
+            <p className="mn-level-eyebrow">{category.tag ? "level" : "random"}</p>
+            <h1 id="mn-level-unavailable-title" className="mn-level-title">
+              {category.label}
+            </h1>
+            <p className="mn-level-description">{category.description}</p>
+          </div>
+          <div className="mn-level-meta" aria-label="词库状态">
+            <span>本地数据库未连接</span>
+          </div>
+        </section>
+        <section className="mn-panel mt-8 p-6">
+          <h2 className="font-serif text-3xl font-semibold">暂时无法读取词库</h2>
+          <p className="mt-3 max-w-2xl text-sm leading-7 text-[var(--mn-muted)]">
+            当前页面已经进入对应词库，但本地 Postgres 没有运行，所以词表数据无法加载。启动本地数据库后刷新页面即可看到单词列表。
+          </p>
+          <Link
+            href="/"
+            className="mt-6 inline-flex h-10 items-center rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-4 text-sm font-semibold transition hover:border-[var(--mn-ink)]"
+          >
+            返回首页
+          </Link>
+        </section>
+      </InteriorContainer>
+    </InteriorPage>
+  );
+}
+
+function isDatabaseUnavailableError(error: unknown) {
+  if (error instanceof Prisma.PrismaClientInitializationError) return true;
+  return error instanceof Error && error.message.includes("Can't reach database server");
 }

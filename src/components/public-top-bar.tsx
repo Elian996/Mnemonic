@@ -19,19 +19,23 @@ export function PublicTopBar({
   user,
   breadcrumbs,
   actionsSlot,
-  rightSlot
+  rightSlot,
+  showBackButton = true,
+  themeVariant = "button"
 }: {
   user: PublicUser;
   breadcrumbs: BreadcrumbItem[];
   actionsSlot?: ReactNode;
   rightSlot?: ReactNode;
+  showBackButton?: boolean;
+  themeVariant?: "button" | "segmented";
 }) {
   const parentHref = [...breadcrumbs].slice(0, -1).reverse().find((item) => item.href)?.href;
 
   return (
     <header className="mn-topbar">
       <div className="flex min-w-0 items-center gap-2">
-        {parentHref ? (
+        {showBackButton && parentHref ? (
           <Link
             href={parentHref}
             aria-label="返回上级"
@@ -59,7 +63,10 @@ export function PublicTopBar({
       <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
         {rightSlot}
         <div className="flex items-center gap-2">
-          <ThemeToggle />
+          <ThemeToggle
+            variant={themeVariant}
+            className={themeVariant === "segmented" ? "mn-topbar-theme-segmented" : undefined}
+          />
           <MemoryCardFontToggle />
           {actionsSlot}
           <Link

@@ -14,7 +14,8 @@ export function WordCardPopupButton({
   disabled = false,
   isAuthenticated,
   defaultUserCardVisibility = "private",
-  canEditOfficialCards = false
+  canEditOfficialCards = false,
+  canExportMemoryCardImages = false
 }: {
   slug: string;
   children: ReactNode;
@@ -24,6 +25,7 @@ export function WordCardPopupButton({
   isAuthenticated: boolean;
   defaultUserCardVisibility?: "private" | "public";
   canEditOfficialCards?: boolean;
+  canExportMemoryCardImages?: boolean;
 }) {
   const [openCards, setOpenCards] = useState<LevelWordItem[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
@@ -95,6 +97,7 @@ export function WordCardPopupButton({
           isAuthenticated={isAuthenticated}
           defaultUserCardVisibility={defaultUserCardVisibility}
           canEditOfficialCards={canEditOfficialCards}
+          canExportMemoryCardImages={canExportMemoryCardImages}
         />
       ) : null}
     </>

@@ -2,7 +2,19 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Circle, Eye, EyeOff, Grid2X2, List, Loader2, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import {
+  Check,
+  Circle,
+  Eye,
+  EyeOff,
+  Grid2X2,
+  List,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  Trash2,
+  X
+} from "lucide-react";
 import { MemoryCardTray, type LevelWordItem } from "@/components/level-word-browser";
 import { cn } from "@/lib/utils";
 import {
@@ -16,6 +28,7 @@ type ProfileListKind = "known" | "fuzzy" | "unknown";
 type SortMode = "random" | "newest" | "oldest" | "az" | "za";
 type ViewMode = "grid" | "list";
 type WordMarkState = NonNullable<LevelWordItem["markState"]>;
+type WordNavigationDirection = "previous" | "next";
 type MarkHistoryItem = {
   word: ProfileWordListItem;
   previousState: WordMarkState | null;
@@ -51,6 +64,7 @@ export function ProfileWordList({
   const [words, setWords] = useState(initialWords);
   const [openCards, setOpenCards] = useState<LevelWordItem[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
   const [loadingSlug, setLoadingSlug] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>("random");
   const [randomSeed, setRandomSeed] = useState(() => createRandomSeed());
@@ -85,19 +99,29 @@ export function ProfileWordList({
     linkedWordCache.current.clear();
     mnemonicCardDeleteUndoRef.current.clear();
     markHistoryRef.current = [];
-    committedWordStatesRef.current = new Map(initialWords.map((word) => [word.id, currentMarkState]));
+    committedWordStatesRef.current = new Map(
+      initialWords.map((word) => [word.id, currentMarkState])
+    );
     pendingMarkChangesRef.current = new Map();
     setMarkHistory([]);
     setMnemonicCardDeleteUndoIds([]);
   }, [currentMarkState, initialWords, kind]);
 
-  const sortedWords = useMemo(() => sortProfileWords(words, sortMode, randomSeed), [randomSeed, sortMode, words]);
+  const sortedWords = useMemo(
+    () => sortProfileWords(words, sortMode, randomSeed),
+    [randomSeed, sortMode, words]
+  );
 
-  const openWord = (word: LevelWordItem) => {
+  const activateWordCard = useCallback((wordId: string | null) => {
+    setActiveCardId(wordId);
+    if (wordId) setSelectedWordId(wordId);
+  }, []);
+
+  const openWord = useCallback((word: LevelWordItem) => {
     linkedWordCache.current.set(word.slug, word);
-    setActiveCardId(word.id);
+    activateWordCard(word.id);
     setOpenCards((current) => [word, ...current.filter((item) => item.id !== word.id)].slice(0, 5));
-  };
+  }, [activateWordCard]);
 
   const openWordBySlug = async (slug: string) => {
     const cachedWord = linkedWordCache.current.get(slug);
@@ -106,19 +130,83 @@ export function ProfileWordList({
       return true;
     }
 
+    const profileWord = words.find((word) => word.slug === slug);
+    if (profileWord) {
+      openWord(profileWordToLevelWord(profileWord, currentMarkState));
+    }
+
     setLoadingSlug(slug);
     try {
       const fetchedWord = await fetchWordCard(slug);
-      openWord(fetchedWord);
+      linkedWordCache.current.set(fetchedWord.slug, fetchedWord);
+      setOpenCards((current) => {
+        const hasOpenWord = current.some(
+          (word) => word.id === fetchedWord.id || word.slug === fetchedWord.slug
+        );
+        if (!hasOpenWord && !profileWord) {
+          return [fetchedWord, ...current.filter((word) => word.id !== fetchedWord.id)].slice(0, 5);
+        }
+
+        return current.map((word) =>
+          word.id === fetchedWord.id || word.slug === fetchedWord.slug ? fetchedWord : word
+        );
+      });
       return true;
     } finally {
       setLoadingSlug((current) => (current === slug ? null : current));
     }
   };
 
+  const replaceActiveWordCard = useCallback(
+    async (currentWordId: string, nextWord: ProfileWordListItem | null) => {
+      if (!nextWord) {
+        setOpenCards((current) => current.filter((word) => word.id !== currentWordId));
+        setActiveCardId((current) => (current === currentWordId ? null : current));
+        return;
+      }
+
+      const cachedWord = linkedWordCache.current.get(nextWord.slug);
+      if (cachedWord) {
+        openWord(cachedWord);
+        setOpenCards((current) =>
+          [
+            cachedWord,
+            ...current.filter((word) => word.id !== currentWordId && word.id !== cachedWord.id)
+          ].slice(0, 5)
+        );
+        return;
+      }
+
+      const placeholderWord = profileWordToLevelWord(nextWord, currentMarkState);
+      linkedWordCache.current.set(placeholderWord.slug, placeholderWord);
+      activateWordCard(placeholderWord.id);
+      setOpenCards((current) =>
+        [
+          placeholderWord,
+          ...current.filter((word) => word.id !== currentWordId && word.id !== placeholderWord.id)
+        ].slice(0, 5)
+      );
+      setLoadingSlug(nextWord.slug);
+      try {
+        const fetchedWord = await fetchWordCard(nextWord.slug);
+        linkedWordCache.current.set(fetchedWord.slug, fetchedWord);
+        setOpenCards((current) =>
+          current.map((word) =>
+            word.id === placeholderWord.id || word.slug === fetchedWord.slug ? fetchedWord : word
+          )
+        );
+      } finally {
+        setLoadingSlug((current) => (current === nextWord.slug ? null : current));
+      }
+    },
+    [activateWordCard, currentMarkState, openWord]
+  );
+
   const updateWord = (updatedWord: LevelWordItem) => {
     linkedWordCache.current.set(updatedWord.slug, updatedWord);
-    setOpenCards((current) => current.map((word) => (word.id === updatedWord.id ? { ...word, ...updatedWord } : word)));
+    setOpenCards((current) =>
+      current.map((word) => (word.id === updatedWord.id ? { ...word, ...updatedWord } : word))
+    );
     if (updatedWord.markState !== currentMarkState) {
       setWords((current) => current.filter((word) => word.id !== updatedWord.id));
     }
@@ -128,7 +216,10 @@ export function ProfileWordList({
     if (deletingWordId) return;
 
     const previousWords = words;
-    const history = [...markHistoryRef.current, { word, previousState: currentMarkState, previousWords }];
+    const history = [
+      ...markHistoryRef.current,
+      { word, previousState: currentMarkState, previousWords }
+    ];
     markHistoryRef.current = history;
     setMarkHistory(history);
     updateCachedWordMark(word.id, state);
@@ -165,7 +256,9 @@ export function ProfileWordList({
   }, []);
   const undoLastAction = useCallback(() => {
     if (markingWordId || deletingWordId) return;
-    const activeCardRestore = activeCardId ? mnemonicCardDeleteUndoRef.current.get(activeCardId) : null;
+    const activeCardRestore = activeCardId
+      ? mnemonicCardDeleteUndoRef.current.get(activeCardId)
+      : null;
     const fallbackCardRestore = mnemonicCardDeleteUndoIds.length
       ? mnemonicCardDeleteUndoRef.current.get(mnemonicCardDeleteUndoIds.at(-1) ?? "")
       : null;
@@ -193,7 +286,11 @@ export function ProfileWordList({
     );
     for (const [slug, cachedWord] of linkedWordCache.current) {
       if (cachedWord.id === wordId) {
-        linkedWordCache.current.set(slug, { ...cachedWord, isBookmarked: state === "UNKNOWN", markState: state });
+        linkedWordCache.current.set(slug, {
+          ...cachedWord,
+          isBookmarked: state === "UNKNOWN",
+          markState: state
+        });
       }
     }
   };
@@ -220,7 +317,10 @@ export function ProfileWordList({
         committedWordStatesRef.current.delete(wordId);
       }
 
-      if (pendingMarkChangesRef.current.has(wordId) && pendingMarkChangesRef.current.get(wordId) === state) {
+      if (
+        pendingMarkChangesRef.current.has(wordId) &&
+        pendingMarkChangesRef.current.get(wordId) === state
+      ) {
         pendingMarkChangesRef.current.delete(wordId);
       }
     }
@@ -397,7 +497,7 @@ export function ProfileWordList({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || event.key.toLowerCase() !== "r") return;
+      if (!isUndoShortcut(event)) return;
       if (!markHistoryRef.current.length && !mnemonicCardDeleteUndoRef.current.size) return;
       if (isTextInputTarget(event.target)) return;
 
@@ -409,23 +509,35 @@ export function ProfileWordList({
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [undoLastAction]);
 
+  useEffect(() => {
+    if (!selectedWordId) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      focusProfileWordItem(selectedWordId);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeCardId, selectedWordId, sortMode, view, words]);
+
   return (
     <>
-      <section className="mt-8">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-y border-[#d8dde6] py-3 dark:border-border">
-          <div className="text-sm font-medium text-[#69717f] dark:text-muted-foreground">{words.length.toLocaleString("zh-CN")} 个单词</div>
-          <div className="flex flex-wrap items-center gap-2">
+      <section className="mn-profile-word-list mt-8">
+        <div className="mn-profile-word-toolbar flex flex-wrap items-center justify-between gap-3 border-y border-[#d8dde6] py-3 dark:border-border">
+          <div className="mn-profile-word-count text-sm font-medium text-[#69717f] dark:text-muted-foreground">
+            {words.length.toLocaleString("zh-CN")} 个单词
+          </div>
+          <div className="mn-profile-word-actions flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={undoLastAction}
               disabled={!canUndoLastAction || Boolean(markingWordId) || Boolean(deletingWordId)}
-              title="撤销上一步，含记忆卡删除 (Shift+R)"
-              aria-label="撤销上一步，快捷键 Shift+R"
-              className="flex h-10 w-10 appearance-none items-center justify-center rounded-md border border-[#d8dde6] bg-white text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] disabled:pointer-events-none disabled:opacity-35 dark:border-border dark:bg-card dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
+              title="撤销上一步，含记忆卡删除 (⌘Z / Ctrl+Z / Shift+R)"
+              aria-label="撤销上一步，快捷键 Command Z、Control Z 或 Shift R"
+              className="mn-profile-icon-button flex h-10 w-10 appearance-none items-center justify-center rounded-md border border-[#d8dde6] bg-white text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] disabled:pointer-events-none disabled:opacity-35 dark:border-border dark:bg-card dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
             >
               <RotateCcw className="h-4 w-4" />
             </button>
-            <div className="grid grid-cols-5 overflow-hidden rounded-md border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
+            <div className="mn-profile-sort-control grid grid-cols-5 overflow-hidden rounded-md border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
               {sortOptions.map((option) => (
                 <button
                   key={option.value}
@@ -446,7 +558,7 @@ export function ProfileWordList({
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-2 overflow-hidden rounded-md border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
+            <div className="mn-profile-view-control grid grid-cols-2 overflow-hidden rounded-md border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
               <button
                 type="button"
                 onClick={() => setView("grid")}
@@ -454,7 +566,9 @@ export function ProfileWordList({
                 aria-label="格子展示"
                 className={cn(
                   "flex h-10 w-11 appearance-none items-center justify-center transition",
-                  view === "grid" ? "bg-[#171a1f] text-white dark:bg-foreground dark:text-background" : "text-[#69717f] hover:bg-[#eef2f6] dark:text-muted-foreground dark:hover:bg-muted"
+                  view === "grid"
+                    ? "bg-[#171a1f] text-white dark:bg-foreground dark:text-background"
+                    : "text-[#69717f] hover:bg-[#eef2f6] dark:text-muted-foreground dark:hover:bg-muted"
                 )}
               >
                 <Grid2X2 className="h-4 w-4" />
@@ -466,7 +580,9 @@ export function ProfileWordList({
                 aria-label="列表展示"
                 className={cn(
                   "flex h-10 w-11 appearance-none items-center justify-center border-l border-[#d8dde6] transition dark:border-border",
-                  view === "list" ? "bg-[#171a1f] text-white dark:bg-foreground dark:text-background" : "text-[#69717f] hover:bg-[#eef2f6] dark:text-muted-foreground dark:hover:bg-muted"
+                  view === "list"
+                    ? "bg-[#171a1f] text-white dark:bg-foreground dark:text-background"
+                    : "text-[#69717f] hover:bg-[#eef2f6] dark:text-muted-foreground dark:hover:bg-muted"
                 )}
               >
                 <List className="h-4 w-4" />
@@ -475,7 +591,7 @@ export function ProfileWordList({
             <button
               type="button"
               onClick={() => setShowMeaning((value) => !value)}
-              className="inline-flex h-10 appearance-none items-center gap-2 rounded-md border border-[#d8dde6] bg-white px-3 text-sm font-semibold text-[#171a1f] transition hover:border-[#171a1f] dark:border-border dark:bg-card dark:text-foreground dark:hover:border-foreground"
+              className="mn-profile-toggle-button inline-flex h-10 appearance-none items-center gap-2 rounded-md border border-[#d8dde6] bg-white px-3 text-sm font-semibold text-[#171a1f] transition hover:border-[#171a1f] dark:border-border dark:bg-card dark:text-foreground dark:hover:border-foreground"
             >
               {showMeaning ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               {showMeaning ? "隐藏释义" : "显示释义"}
@@ -485,7 +601,7 @@ export function ProfileWordList({
               onClick={() => setIsEditing((value) => !value)}
               aria-pressed={isEditing}
               className={cn(
-                "inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition",
+                "mn-profile-edit-button inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition",
                 isEditing
                   ? "border-[#171a1f] bg-[#171a1f] text-white dark:border-foreground dark:bg-foreground dark:text-background"
                   : "border-[#d8dde6] bg-white text-[#171a1f] hover:border-[#171a1f] dark:border-border dark:bg-card dark:text-foreground dark:hover:border-foreground"
@@ -498,11 +614,11 @@ export function ProfileWordList({
         </div>
 
         {sortedWords.length === 0 ? (
-          <div className="mt-8 rounded-lg border border-dashed border-[#cbd3df] bg-white p-10 text-center text-sm font-medium text-[#69717f] dark:border-border dark:bg-card dark:text-muted-foreground">
+          <div className="mn-profile-empty mt-8 rounded-lg border border-dashed border-[#cbd3df] bg-white p-10 text-center text-sm font-medium text-[#69717f] dark:border-border dark:bg-card dark:text-muted-foreground">
             {emptyText}
           </div>
         ) : view === "grid" ? (
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="mn-profile-word-grid mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {sortedWords.map((word) => (
               <ProfileWordCard
                 key={word.id}
@@ -513,6 +629,7 @@ export function ProfileWordList({
                 isLoading={loadingSlug === word.slug}
                 isBusy={markingWordId === word.id}
                 isDeleting={deletingWordId === word.id}
+                isSelected={selectedWordId === word.id}
                 onOpen={() => void openWordBySlug(word.slug)}
                 onMark={applyProfileMark}
                 onDelete={deleteWord}
@@ -520,7 +637,7 @@ export function ProfileWordList({
             ))}
           </div>
         ) : (
-          <div className="mt-5 overflow-hidden rounded-lg border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
+          <div className="mn-profile-word-row-list mt-5 overflow-hidden rounded-lg border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
             {sortedWords.map((word) => (
               <ProfileWordRow
                 key={word.id}
@@ -531,6 +648,7 @@ export function ProfileWordList({
                 isLoading={loadingSlug === word.slug}
                 isBusy={markingWordId === word.id}
                 isDeleting={deletingWordId === word.id}
+                isSelected={selectedWordId === word.id}
                 onOpen={() => void openWordBySlug(word.slug)}
                 onMark={applyProfileMark}
                 onDelete={deleteWord}
@@ -544,13 +662,29 @@ export function ProfileWordList({
         <MemoryCardTray
           words={openCards}
           activeCardId={activeCardId}
-          onActivate={setActiveCardId}
-          onClose={(wordId) => setOpenCards((current) => current.filter((word) => word.id !== wordId))}
+          onActivate={activateWordCard}
+          onClose={(wordId) =>
+            setOpenCards((current) => current.filter((word) => word.id !== wordId))
+          }
           onOpenLinkedWord={openLinkedWord}
           onWordUpdate={updateWord}
           onCollectionMark={async (word, state) => {
-            const profileWord = words.find((item) => item.id === word.id);
-            if (profileWord) await applyProfileMark(profileWord, state);
+            const profileWord = findProfileWord(words, word) ?? levelWordToProfileWord(word);
+            await applyProfileMark(profileWord, state);
+          }}
+          onNavigateWord={(word, direction) => {
+            const nextWord = adjacentProfileWord(sortedWords, word, direction);
+            void replaceActiveWordCard(word.id, nextWord).catch(() => undefined);
+          }}
+          onKeyboardMark={(word, state) => {
+            const profileWord = findProfileWord(words, word) ?? levelWordToProfileWord(word);
+            const nextState = word.markState === state ? null : state;
+
+            void applyProfileMark(profileWord, nextState);
+            if (nextState === "KNOWN") {
+              const nextWord = adjacentProfileWord(sortedWords, word, "next");
+              void replaceActiveWordCard(word.id, nextWord).catch(() => undefined);
+            }
           }}
           onMnemonicCardDeleteUndoChange={updateMnemonicCardDeleteUndo}
           isAuthenticated={true}
@@ -568,6 +702,7 @@ function ProfileWordCard({
   isLoading,
   isBusy,
   isDeleting,
+  isSelected,
   onOpen,
   onMark,
   onDelete
@@ -579,6 +714,7 @@ function ProfileWordCard({
   isLoading: boolean;
   isBusy: boolean;
   isDeleting: boolean;
+  isSelected: boolean;
   onOpen: () => void;
   onMark: (word: ProfileWordListItem, state: WordMarkState | null) => void;
   onDelete: (word: ProfileWordListItem) => void;
@@ -587,6 +723,7 @@ function ProfileWordCard({
     <div
       role="button"
       tabIndex={0}
+      data-level-word-id={word.id}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -594,19 +731,45 @@ function ProfileWordCard({
           onOpen();
         }
       }}
-      className="group relative flex min-h-44 appearance-none flex-col justify-between rounded-lg border border-[#d8dde6] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#171a1f] hover:shadow-sm dark:border-border dark:bg-card dark:hover:border-foreground"
+      className={cn(
+        "mn-profile-word-card group relative flex min-h-44 appearance-none flex-col justify-between rounded-lg border border-[#d8dde6] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#171a1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:border-border dark:bg-card dark:hover:border-foreground",
+        isSelected &&
+          "border-[#1a73e8] ring-2 ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
+      )}
     >
       <span>
         <span className="flex min-w-0 items-start gap-2">
-          <span className={cn("word-card-title block min-w-0 truncate font-semibold tracking-normal text-[#171a1f] dark:text-foreground", (isEditing || isLoading) && "pr-9")}>
+          <span
+            className={cn(
+              "word-card-title block min-w-0 truncate font-semibold tracking-normal text-[#171a1f] dark:text-foreground",
+              (isEditing || isLoading) && "pr-9"
+            )}
+          >
             {word.word}
           </span>
-          {isLoading ? <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-[#69717f]" /> : null}
+          {isLoading ? (
+            <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-[#69717f]" />
+          ) : null}
         </span>
-        <span className="word-card-meaning mt-6 block min-h-12 text-[#323741] dark:text-foreground/80">{showMeaning ? word.shortMeaningCn || word.meaningCn || "释义待补" : "••••••"}</span>
+        <span className="word-card-meaning mt-6 block min-h-12 text-[#323741] dark:text-foreground/80">
+          {showMeaning ? word.shortMeaningCn || word.meaningCn || "释义待补" : "••••••"}
+        </span>
       </span>
-      {isEditing ? <DeleteWordButton word={word} isDeleting={isDeleting} onDelete={onDelete} className="absolute right-3 top-3" /> : null}
-      <ProfileMarkButtons word={word} markState={markState} disabled={isBusy || isDeleting} onMark={onMark} className="mt-4 border-t border-[#eef2f6] pt-3 dark:border-border" />
+      {isEditing ? (
+        <DeleteWordButton
+          word={word}
+          isDeleting={isDeleting}
+          onDelete={onDelete}
+          className="absolute right-3 top-3"
+        />
+      ) : null}
+      <ProfileMarkButtons
+        word={word}
+        markState={markState}
+        disabled={isBusy || isDeleting}
+        onMark={onMark}
+        className="mt-4 border-t border-[#eef2f6] pt-3 dark:border-border"
+      />
     </div>
   );
 }
@@ -619,6 +782,7 @@ function ProfileWordRow({
   isLoading,
   isBusy,
   isDeleting,
+  isSelected,
   onOpen,
   onMark,
   onDelete
@@ -630,6 +794,7 @@ function ProfileWordRow({
   isLoading: boolean;
   isBusy: boolean;
   isDeleting: boolean;
+  isSelected: boolean;
   onOpen: () => void;
   onMark: (word: ProfileWordListItem, state: WordMarkState | null) => void;
   onDelete: (word: ProfileWordListItem) => void;
@@ -638,6 +803,7 @@ function ProfileWordRow({
     <div
       role="button"
       tabIndex={0}
+      data-level-word-id={word.id}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -645,16 +811,31 @@ function ProfileWordRow({
           onOpen();
         }
       }}
-      className="grid min-h-16 w-full appearance-none gap-3 border-b border-[#e5e9f0] px-4 py-3 text-left transition last:border-b-0 hover:bg-[#f6f8fb] dark:border-border dark:hover:bg-muted sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-center"
+      className={cn(
+        "mn-profile-word-row grid min-h-16 w-full appearance-none gap-3 border-b border-[#e5e9f0] px-4 py-3 text-left transition last:border-b-0 hover:bg-[#f6f8fb] focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1a73e8] dark:border-border dark:hover:bg-muted sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-center",
+        isSelected &&
+          "border-[#1a73e8] ring-2 ring-inset ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
+      )}
     >
       <span className="flex min-w-0 items-center gap-2">
-        <span className="word-row-title min-w-0 truncate font-semibold text-[#171a1f] dark:text-foreground">{word.word}</span>
+        <span className="word-row-title min-w-0 truncate font-semibold text-[#171a1f] dark:text-foreground">
+          {word.word}
+        </span>
         {isLoading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#69717f]" /> : null}
       </span>
-      <span className="word-row-meaning min-w-0 truncate text-[#323741] dark:text-foreground/80">{showMeaning ? word.shortMeaningCn || word.meaningCn || "释义待补" : "••••••"}</span>
+      <span className="word-row-meaning min-w-0 truncate text-[#323741] dark:text-foreground/80">
+        {showMeaning ? word.shortMeaningCn || word.meaningCn || "释义待补" : "••••••"}
+      </span>
       <span className="flex items-center gap-2">
-        <ProfileMarkButtons word={word} markState={markState} disabled={isBusy || isDeleting} onMark={onMark} />
-        {isEditing ? <DeleteWordButton word={word} isDeleting={isDeleting} onDelete={onDelete} /> : null}
+        <ProfileMarkButtons
+          word={word}
+          markState={markState}
+          disabled={isBusy || isDeleting}
+          onMark={onMark}
+        />
+        {isEditing ? (
+          <DeleteWordButton word={word} isDeleting={isDeleting} onDelete={onDelete} />
+        ) : null}
       </span>
     </div>
   );
@@ -698,7 +879,7 @@ function ProfileMarkButtons({
   ];
 
   return (
-    <div className={cn("flex items-center gap-2", className)}>
+    <div className={cn("mn-profile-mark-buttons flex items-center gap-2", className)}>
       {buttons.map((button) => {
         const Icon = button.icon;
         const active = markState === button.state;
@@ -710,10 +891,12 @@ function ProfileMarkButtons({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              onMark(word, active && button.state !== "KNOWN" ? null : button.state);
+              onMark(word, active ? null : button.state);
             }}
             onKeyDown={(event) => event.stopPropagation()}
-            aria-label={active ? `${word.word} 取消${button.label}标记` : `${word.word} 标记为${button.label}`}
+            aria-label={
+              active ? `${word.word} 取消${button.label}标记` : `${word.word} 标记为${button.label}`
+            }
             title={active ? `取消${button.label}` : button.label}
             className={cn(
               "flex h-8 w-8 shrink-0 appearance-none items-center justify-center rounded-full border transition disabled:pointer-events-none disabled:opacity-50",
@@ -751,7 +934,7 @@ function DeleteWordButton({
       aria-label={`删除 ${word.word}`}
       title={`删除 ${word.word}`}
       className={cn(
-        "flex h-9 w-9 appearance-none items-center justify-center rounded-md border border-[#f1b8ad] bg-[#fff1ee] text-[#c2412d] transition hover:border-[#c2412d] hover:bg-[#ffe5df] disabled:pointer-events-none disabled:opacity-60 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300",
+        "mn-profile-delete-button flex h-9 w-9 appearance-none items-center justify-center rounded-md border border-[#f1b8ad] bg-[#fff1ee] text-[#c2412d] transition hover:border-[#c2412d] hover:bg-[#ffe5df] disabled:pointer-events-none disabled:opacity-60 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300",
         className
       )}
     >
@@ -775,10 +958,20 @@ const profileKindToMarkState: Record<ProfileListKind, WordMarkState> = {
 };
 
 function sortProfileWords(words: ProfileWordListItem[], sortMode: SortMode, randomSeed: string) {
-  if (sortMode === "az") return [...words].sort((first, second) => first.word.localeCompare(second.word, "en"));
-  if (sortMode === "za") return [...words].sort((first, second) => second.word.localeCompare(first.word, "en"));
-  if (sortMode === "oldest") return [...words].sort((first, second) => joinedAtTime(first) - joinedAtTime(second) || first.word.localeCompare(second.word, "en"));
-  if (sortMode === "newest") return [...words].sort((first, second) => joinedAtTime(second) - joinedAtTime(first) || first.word.localeCompare(second.word, "en"));
+  if (sortMode === "az")
+    return [...words].sort((first, second) => first.word.localeCompare(second.word, "en"));
+  if (sortMode === "za")
+    return [...words].sort((first, second) => second.word.localeCompare(first.word, "en"));
+  if (sortMode === "oldest")
+    return [...words].sort(
+      (first, second) =>
+        joinedAtTime(first) - joinedAtTime(second) || first.word.localeCompare(second.word, "en")
+    );
+  if (sortMode === "newest")
+    return [...words].sort(
+      (first, second) =>
+        joinedAtTime(second) - joinedAtTime(first) || first.word.localeCompare(second.word, "en")
+    );
 
   return [...words].sort((first, second) => {
     const firstRank = randomRank(`${randomSeed}:${first.slug}`);
@@ -806,7 +999,95 @@ function createRandomSeed() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-async function saveProfileWordStates(changes: Array<[string, WordMarkState | null]>, options: { keepalive?: boolean } = {}) {
+function adjacentProfileWord(
+  words: ProfileWordListItem[],
+  word: Pick<LevelWordItem, "id" | "slug">,
+  direction: WordNavigationDirection
+) {
+  if (!words.length) return null;
+  const currentIndex = words.findIndex((item) => item.id === word.id || item.slug === word.slug);
+  if (currentIndex < 0) return direction === "next" ? words[0] : words[words.length - 1];
+  if (words.length === 1) return null;
+
+  const step = direction === "next" ? 1 : -1;
+  const nextIndex = (currentIndex + step + words.length) % words.length;
+  return words[nextIndex] ?? null;
+}
+
+function findProfileWord(words: ProfileWordListItem[], word: Pick<LevelWordItem, "id" | "slug">) {
+  return words.find((item) => item.id === word.id || item.slug === word.slug);
+}
+
+function focusProfileWordItem(wordId: string) {
+  const wordElement = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-level-word-id]")
+  ).find((element) => element.dataset.levelWordId === wordId);
+  if (!wordElement) return;
+
+  wordElement.focus({ preventScroll: true });
+  wordElement.scrollIntoView({
+    block: "center",
+    inline: "nearest",
+    behavior: "auto"
+  });
+}
+
+function profileWordToLevelWord(
+  word: ProfileWordListItem,
+  markState: WordMarkState
+): LevelWordItem {
+  return {
+    id: word.id,
+    word: word.word,
+    slug: word.slug,
+    phonetic: word.phoneticUs || word.phoneticUk || "",
+    audioUkUrl: "",
+    audioUsUrl: "",
+    partOfSpeech: "",
+    meaningCn: word.meaningCn,
+    shortMeaningCn: word.shortMeaningCn,
+    exampleSentence: "",
+    exampleTranslation: "",
+    markState,
+    isBookmarked: markState === "UNKNOWN",
+    mnemonic: null,
+    mnemonics: []
+  };
+}
+
+function levelWordToProfileWord(word: LevelWordItem): ProfileWordListItem {
+  return {
+    id: word.id,
+    slug: word.slug,
+    word: word.word,
+    phoneticUk: word.phonetic || null,
+    phoneticUs: word.phonetic || null,
+    shortMeaningCn: word.shortMeaningCn,
+    meaningCn: word.meaningCn,
+    joinedAt: new Date().toISOString()
+  };
+}
+
+function isUndoShortcut(event: KeyboardEvent) {
+  const key = event.key.toLowerCase();
+  const isSystemUndo =
+    (event.metaKey || event.ctrlKey) &&
+    (key === "z" || event.code === "KeyZ") &&
+    !event.shiftKey &&
+    !event.altKey;
+  const isPanelUndo =
+    event.shiftKey &&
+    (key === "r" || event.code === "KeyR") &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey;
+  return isSystemUndo || isPanelUndo;
+}
+
+async function saveProfileWordStates(
+  changes: Array<[string, WordMarkState | null]>,
+  options: { keepalive?: boolean } = {}
+) {
   const response = await fetch("/api/word-marks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -825,7 +1106,8 @@ async function saveProfileWordStates(changes: Array<[string, WordMarkState | nul
 
 function isTextInputTarget(target: EventTarget | null) {
   return (
-    (target instanceof HTMLInputElement && !["range", "button", "checkbox", "radio"].includes(target.type)) ||
+    (target instanceof HTMLInputElement &&
+      !["range", "button", "checkbox", "radio"].includes(target.type)) ||
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement ||
     (target instanceof HTMLElement && target.isContentEditable)
@@ -836,7 +1118,9 @@ async function fetchWordCard(slug: string) {
   const response = await fetch(`/api/word-card/${encodeURIComponent(slug)}?fresh=${Date.now()}`, {
     cache: "no-store"
   });
-  const result = (await response.json().catch(() => ({}))) as Partial<LevelWordItem> & { error?: string };
+  const result = (await response.json().catch(() => ({}))) as Partial<LevelWordItem> & {
+    error?: string;
+  };
 
   if (!response.ok) {
     throw new Error(result.error || "单词卡加载失败。");

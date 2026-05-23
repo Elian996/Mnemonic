@@ -2,7 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { UserRole } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { hasRole } from "@/lib/permissions";
 
@@ -45,12 +45,17 @@ export async function getSessionUser() {
   const session = verifySessionCookie(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return null;
 
-  return prisma.user.findFirst({
-    where: {
-      id: session.userId,
-      status: "ACTIVE"
-    }
-  });
+  try {
+    return await prisma.user.findFirst({
+      where: {
+        id: session.userId,
+        status: "ACTIVE"
+      }
+    });
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) return null;
+    throw error;
+  }
 }
 
 export async function requireUser() {
@@ -123,4 +128,9 @@ function sessionSecret() {
     throw new Error("生产环境必须配置 SESSION_SECRET。");
   }
   return "mnemonic-development-session-secret";
+}
+
+function isDatabaseUnavailableError(error: unknown) {
+  if (error instanceof Prisma.PrismaClientInitializationError) return true;
+  return error instanceof Error && error.message.includes("Can't reach database server");
 }

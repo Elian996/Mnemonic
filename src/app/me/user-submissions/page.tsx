@@ -11,7 +11,7 @@ import { requireUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { canReviewSubmissions } from "@/lib/permissions";
 import { reviewSubmissionAction } from "@/lib/services/mnemonic-service";
-import { InteriorContainer, InteriorHero, InteriorPage, InteriorPanel } from "@/components/interior-shell";
+import { InteriorContainer, InteriorPage } from "@/components/interior-shell";
 
 export default async function UserSubmissionsPage() {
   const user = await requireUser();
@@ -27,7 +27,7 @@ export default async function UserSubmissionsPage() {
   });
 
   return (
-    <InteriorPage>
+    <InteriorPage className="mn-profile-page">
       <PublicTopBar
         user={user}
         breadcrumbs={[
@@ -35,72 +35,79 @@ export default async function UserSubmissionsPage() {
           { label: "个人中心", href: "/me" },
           { label: "用户创作记忆卡" }
         ]}
+        themeVariant="segmented"
       />
 
       <InteriorContainer wide>
-        <InteriorHero
-          eyebrow="review"
-          title={
-            <span className="inline-flex items-center gap-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-md border border-[var(--mn-line)] text-[var(--mn-muted)]">
-                <BookMarked className="h-5 w-5" />
+        <section className="mn-profile-subhero" aria-labelledby="submissions-title">
+          <div className="mn-profile-subhero-copy">
+            <p className="mn-profile-eyebrow">review</p>
+            <h1 id="submissions-title" className="mn-profile-subtitle-heading">
+              <span className="mn-profile-heading-icon">
+                <BookMarked className="h-5 w-5" aria-hidden />
               </span>
               用户创作记忆卡
-            </span>
-          }
-          description="用户选择公开的个人记忆卡会进入这里；审核通过后公开展示，审核失败则退回作者。"
-          meta={`${entries.length.toLocaleString("zh-CN")} 张待审核`}
-          actions={
-            <Link href="/me" className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--mn-muted)] transition hover:text-[var(--mn-ink)]">
-              <ArrowLeft className="h-4 w-4" />
+            </h1>
+            <p className="mn-profile-subcopy">
+              用户选择公开的个人记忆卡会进入这里；通过后公开展示。
+            </p>
+          </div>
+          <div className="mn-profile-subhero-side">
+            <span>{entries.length.toLocaleString("zh-CN")} 张待审核</span>
+            <Link href="/me" className="mn-profile-back-link">
+              <ArrowLeft className="h-4 w-4" aria-hidden />
               个人中心
             </Link>
-          }
-        />
+          </div>
+        </section>
 
-        <div className="mt-8 space-y-4">
+        <div className="mn-profile-review-list">
           {entries.map((entry) => (
-            <InteriorPanel key={entry.id} className="p-5">
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <section key={entry.id} className="mn-profile-review-item">
+              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
                 <article className="min-w-0">
                   <div className="flex flex-wrap items-center gap-3">
-                    <Link href={`/word/${entry.targetWord.slug}`} className="text-xl font-semibold transition hover:text-[var(--mn-red)]">
+                    <Link href={`/word/${entry.targetWord.slug}`} className="mn-profile-word-link">
                       {entry.targetWord.word}
                     </Link>
                     <StatusBadge value={entry.status} />
-                    <span className="text-sm text-[var(--mn-muted)]">作者：{entry.author.displayName}</span>
+                    <span className="text-sm text-[var(--mn-text-muted)]">
+                      作者：{entry.author.displayName}
+                    </span>
                   </div>
-                  <p className="mt-3 text-sm leading-6 text-[var(--mn-muted)]">{entry.targetWord.shortMeaningCn}</p>
-                  {entry.splitText ? <p className="mt-4 text-sm font-semibold">划分：{entry.splitText}</p> : null}
-                  <div className="mt-3 rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] p-4 text-sm leading-7">
+                  <p className="mn-profile-row-copy mt-3">{entry.targetWord.shortMeaningCn}</p>
+                  {entry.splitText ? (
+                    <p className="mt-4 text-sm font-semibold">划分：{entry.splitText}</p>
+                  ) : null}
+                  <div className="mn-profile-review-body">
                     <WikiRichText html={entry.contentHtml} />
                   </div>
                 </article>
 
-                <form action={reviewSubmissionAction} className="space-y-3 rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] p-4">
+                <form action={reviewSubmissionAction} className="mn-profile-review-form">
                   <input type="hidden" name="entryId" value={entry.id} />
                   <input type="hidden" name="returnTo" value="user-submissions" />
                   <Textarea name="reviewNote" placeholder="审核意见，会发送给原作者" />
                   <input type="hidden" name="editorScore" value="6" />
                   <div className="flex flex-wrap gap-2">
-                    <Button name="decision" value="approve" type="submit">
-                      <Check className="h-4 w-4" />
+                    <Button name="decision" value="approve" type="submit" className="mn-profile-button">
+                      <Check className="h-4 w-4" aria-hidden />
                       审核通过
                     </Button>
                     <Button name="decision" value="reject" type="submit" variant="destructive">
-                      <X className="h-4 w-4" />
+                      <X className="h-4 w-4" aria-hidden />
                       审核失败
                     </Button>
                   </div>
                 </form>
               </div>
-            </InteriorPanel>
+            </section>
           ))}
 
           {!entries.length ? (
-            <InteriorPanel className="p-6 text-sm leading-6 text-[var(--mn-muted)]">
+            <div className="mn-profile-empty">
               暂无用户公开创作需要审核。
-            </InteriorPanel>
+            </div>
           ) : null}
         </div>
       </InteriorContainer>

@@ -16,7 +16,6 @@ export function RepositoryContaminationPanel({ groups }: { groups: Contamination
     .filter((group) => group.id !== "duplicate-section" && group.id !== "odd-separator")
     .reduce((sum, group) => sum + group.words.length, 0);
   const reviewCount = Math.max(0, total - definiteCount);
-  const defaultOpen = total > 0;
 
   const openWord = (word: LevelWordItem) => {
     wordCache.current.set(word.slug, word);
@@ -47,10 +46,9 @@ export function RepositoryContaminationPanel({ groups }: { groups: Contamination
   };
 
   return (
-    <section className="mx-auto max-w-7xl px-5 pt-6 sm:px-8">
+    <section className="mn-repository-panel-wrap mx-auto max-w-7xl px-5 pt-6 sm:px-8">
       <details
-        open={defaultOpen}
-        className="group overflow-hidden rounded-[28px] bg-white/95 shadow-[0_18px_55px_rgba(0,0,0,0.08)] ring-1 ring-black/5"
+        className="mn-repository-panel group overflow-hidden rounded-[28px] bg-white/95 shadow-[0_18px_55px_rgba(0,0,0,0.08)] ring-1 ring-black/5"
       >
         <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4 px-5 py-4 marker:hidden sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -109,6 +107,7 @@ function Metric({ label, value, tone }: { label: string; value: number | string;
   return (
     <div
       className={cn(
+        "mn-repository-metric",
         "rounded-2xl px-4 py-3 ring-1",
         tone === "clean" && "bg-emerald-50 text-emerald-900 ring-emerald-100",
         tone === "danger" && "bg-rose-50 text-rose-900 ring-rose-100",
@@ -134,7 +133,7 @@ function IssueGroup({
   const visibleWords = useMemo(() => group.words.slice(0, 160), [group.words]);
 
   return (
-    <section className="border-t border-black/5 pt-4 first:border-t-0 first:pt-0">
+    <section className="mn-repository-issue-group border-t border-black/5 pt-4 first:border-t-0 first:pt-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-[#1d1d1f]">
@@ -158,7 +157,7 @@ function IssueGroup({
                 disabled={isLoading}
                 title={[word.meaning, ...word.details].join("\n")}
                 className={cn(
-                  "inline-flex h-9 max-w-full items-center gap-2 rounded-full border px-3 text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-70",
+                  "mn-repository-word-chip inline-flex h-9 max-w-full items-center gap-2 rounded-full border px-3 text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-70",
                   group.tone === "danger" && "border-rose-200 bg-rose-50 text-rose-900 hover:border-rose-400",
                   group.tone === "warning" && "border-amber-200 bg-amber-50 text-amber-900 hover:border-amber-400",
                   group.tone === "info" && "border-sky-200 bg-sky-50 text-sky-900 hover:border-sky-400"

@@ -1,18 +1,36 @@
 import Link from "next/link";
-import { BookMarked, BookOpenCheck, Check, Circle, ExternalLink, Inbox, X, type LucideIcon } from "lucide-react";
+import {
+  ArrowRight,
+  BookMarked,
+  BookOpenCheck,
+  Check,
+  Circle,
+  Database,
+  ExternalLink,
+  Inbox,
+  X,
+  type LucideIcon
+} from "lucide-react";
 import { MnemonicSourceType, MnemonicStatus } from "@prisma/client";
 import { PublicTopBar } from "@/components/public-top-bar";
 import { getSessionUser, requireUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { canReviewSubmissions } from "@/lib/permissions";
-import { InteriorContainer, InteriorHero, InteriorPage, InteriorPanel } from "@/components/interior-shell";
+import { InteriorContainer, InteriorPage } from "@/components/interior-shell";
 
 export default async function MePage() {
   const sessionUser = await getSessionUser();
   const user = sessionUser ?? (await requireUser());
 
   const canReview = canReviewSubmissions(user);
-  const [markCounts, unreadNotificationCount, myMnemonicCount, pendingUserSubmissionCount] = await Promise.all([
+  const canUseRepository = canReview;
+  const [
+    markCounts,
+    unreadNotificationCount,
+    myMnemonicCount,
+    pendingUserSubmissionCount,
+    totalWordCount
+  ] = await Promise.all([
     prisma.wordMark.groupBy({
       by: ["state"],
       where: { userId: user.id },
@@ -33,97 +51,135 @@ export default async function MePage() {
             status: MnemonicStatus.PENDING_REVIEW
           }
         })
-      : Promise.resolve(0)
+      : Promise.resolve(0),
+    canUseRepository ? prisma.word.count() : Promise.resolve(0)
   ]);
 
-  const markCountByState = Object.fromEntries(markCounts.map((item) => [item.state, item._count._all]));
-  const modules = [
+  const markCountByState = Object.fromEntries(
+    markCounts.map((item) => [item.state, item._count._all])
+  );
+  const learningModules = [
     {
       key: "known" as const,
+      href: "/me/known",
       label: "熟练",
       value: markCountByState.KNOWN ?? 0,
       icon: Check
     },
     {
       key: "fuzzy" as const,
+      href: "/me/fuzzy",
       label: "模糊",
       value: markCountByState.FUZZY ?? 0,
       icon: Circle
     },
     {
       key: "unknown" as const,
+      href: "/me/unknown",
       label: "生词本",
       value: markCountByState.UNKNOWN ?? 0,
       icon: X
-    },
+    }
+  ];
+  const directoryModules = [
     {
       key: "mnemonics" as const,
+      href: "/me/mnemonics",
       label: "管理我的记忆卡",
       value: myMnemonicCount,
       icon: BookOpenCheck
     },
     {
       key: "inbox" as const,
+      href: "/me/inbox",
       label: "收件箱",
       value: unreadNotificationCount,
       icon: Inbox
     }
   ];
-  const adminModules = canReview
-    ? [
-        {
-          key: "user-submissions" as const,
-          label: "用户创作记忆卡",
-          value: pendingUserSubmissionCount,
-          icon: BookMarked
-        }
-      ]
-    : [];
+  const adminModules = [
+    ...(canUseRepository
+      ? [
+          {
+            key: "repository" as const,
+            href: "/repository",
+            label: "单词仓库",
+            value: totalWordCount,
+            icon: Database
+          }
+        ]
+      : []),
+    ...(canReview
+      ? [
+          {
+            key: "user-submissions" as const,
+            href: "/me/user-submissions",
+            label: "用户创作记忆卡",
+            value: pendingUserSubmissionCount,
+            icon: BookMarked
+          }
+        ]
+      : [])
+  ];
 
   return (
-    <InteriorPage>
+    <InteriorPage className="mn-profile-page">
       <PublicTopBar
         user={user}
-        breadcrumbs={[
-          { label: "首页", href: "/" },
-          { label: "个人中心" }
-        ]}
+        breadcrumbs={[{ label: "首页", href: "/" }, { label: "我的" }]}
+        showBackButton={false}
+        themeVariant="segmented"
       />
 
-      <InteriorContainer>
-        <InteriorHero
-          eyebrow="profile"
-          title={user.displayName}
-          description={`@${user.username}`}
-          meta="个人中心"
-          actions={
-            <Link
-              href={`/profile/${user.username}`}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-4 text-sm font-semibold transition hover:border-[var(--mn-ink)]"
-            >
-              <ExternalLink className="h-4 w-4" />
-              公开主页
-            </Link>
-          }
-        />
-        <InteriorPanel className="mt-8 flex flex-col gap-5 p-6 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 className="font-serif text-3xl font-semibold">学习状态</h2>
-            <p className="mt-2 text-sm text-[var(--mn-muted)]">把熟练、模糊和生词分开收纳，后续复习会更清楚。</p>
+      <InteriorContainer className="mn-profile-container">
+        <section className="mn-profile-identity" aria-labelledby="me-title">
+          <div className="min-w-0">
+            <p className="mn-profile-eyebrow">profile</p>
+            <h1 id="me-title" className="mn-profile-title">
+              {user.displayName}
+            </h1>
+            <p className="mn-profile-handle">@{user.username}</p>
           </div>
-        </InteriorPanel>
+          <Link href={`/profile/${user.username}`} className="mn-profile-outline-button">
+            <ExternalLink className="h-4 w-4" aria-hidden />
+            公开主页
+          </Link>
+        </section>
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {[...modules, ...adminModules].map((module) => (
-            <ModuleCard key={module.key} href={`/me/${module.key}`} label={module.label} value={module.value} icon={module.icon} />
+        <section className="mn-profile-status-strip" aria-label="学习状态">
+          {learningModules.map((module) => (
+            <StatusLink
+              key={module.key}
+              href={module.href}
+              label={module.label}
+              value={module.value}
+              icon={module.icon}
+            />
           ))}
-        </div>
+        </section>
+
+        <section className="mn-profile-directory" aria-labelledby="profile-directory-title">
+          <div className="mn-profile-section-head">
+            <p id="profile-directory-title">个人目录</p>
+          </div>
+          <div className="mn-profile-directory-list">
+            {[...directoryModules, ...adminModules].map((module) => (
+              <DirectoryLink
+                key={module.key}
+                href={module.href}
+                label={module.label}
+                value={module.value}
+                icon={module.icon}
+              />
+            ))}
+          </div>
+        </section>
       </InteriorContainer>
     </InteriorPage>
   );
 }
 
-function ModuleCard({
+function StatusLink({
   href,
   label,
   value,
@@ -135,17 +191,42 @@ function ModuleCard({
   icon: LucideIcon;
 }) {
   return (
-    <Link
-      href={href}
-      className="mn-link-card flex min-h-32 flex-col justify-between p-5"
-    >
-      <span className="flex items-center justify-between gap-3">
-        <span className="text-lg font-semibold">{label}</span>
-        <span className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--mn-line)] text-[var(--mn-muted)]">
-          <Icon className="h-4 w-4" />
-        </span>
+    <Link href={href} className="mn-profile-status-item">
+      <span className="mn-profile-status-icon">
+        <Icon className="h-4 w-4" aria-hidden />
       </span>
-      <span className="text-3xl font-semibold">{value.toLocaleString("zh-CN")}</span>
+      <span className="mn-profile-status-copy">
+        <span>{label}</span>
+        <strong>{value.toLocaleString("zh-CN")}</strong>
+      </span>
+      <ArrowRight className="mn-profile-row-arrow h-4 w-4" aria-hidden />
+    </Link>
+  );
+}
+
+function DirectoryLink({
+  href,
+  label,
+  value,
+  icon: Icon
+}: {
+  href: string;
+  label: string;
+  value: number;
+  icon: LucideIcon;
+}) {
+  return (
+    <Link href={href} className="mn-profile-directory-row">
+      <span className="mn-profile-directory-main">
+        <span className="mn-profile-directory-icon">
+          <Icon className="h-4 w-4" aria-hidden />
+        </span>
+        <span>{label}</span>
+      </span>
+      <span className="mn-profile-directory-meta">
+        {value.toLocaleString("zh-CN")}
+        <ArrowRight className="mn-profile-row-arrow h-4 w-4" aria-hidden />
+      </span>
     </Link>
   );
 }

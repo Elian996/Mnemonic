@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { markAllNotificationsReadAction, markNotificationReadAction } from "@/lib/services/notification-service";
-import { InteriorContainer, InteriorHero, InteriorPage, InteriorPanel } from "@/components/interior-shell";
+import { InteriorContainer, InteriorPage } from "@/components/interior-shell";
 
 export default async function InboxPage() {
   const user = await requireUser();
@@ -17,7 +17,7 @@ export default async function InboxPage() {
   const unreadCount = notifications.filter((notification) => !notification.readAt).length;
 
   return (
-    <InteriorPage>
+    <InteriorPage className="mn-profile-page">
       <PublicTopBar
         user={user}
         breadcrumbs={[
@@ -25,61 +25,64 @@ export default async function InboxPage() {
           { label: "个人中心", href: "/me" },
           { label: "收件箱" }
         ]}
+        themeVariant="segmented"
       />
 
       <InteriorContainer>
-        <InteriorHero
-          eyebrow="profile"
-          title={
-            <span className="inline-flex items-center gap-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-md border border-[var(--mn-line)] text-[var(--mn-muted)]">
-                <Inbox className="h-5 w-5" />
+        <section className="mn-profile-subhero" aria-labelledby="inbox-title">
+          <div className="mn-profile-subhero-copy">
+            <p className="mn-profile-eyebrow">profile</p>
+            <h1 id="inbox-title" className="mn-profile-subtitle-heading">
+              <span className="mn-profile-heading-icon">
+                <Inbox className="h-5 w-5" aria-hidden />
               </span>
               收件箱
-            </span>
-          }
-          description="公开记忆卡的审核结果会在这里提醒你。"
-          meta={`${unreadCount.toLocaleString("zh-CN")} 条未读`}
-          actions={
-            <>
-              <Link href="/me" className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--mn-muted)] transition hover:text-[var(--mn-ink)]">
-                <ArrowLeft className="h-4 w-4" />
+            </h1>
+            <p className="mn-profile-subcopy">公开记忆卡的审核结果会在这里提醒你。</p>
+          </div>
+          <div className="mn-profile-subhero-side">
+            <span>{unreadCount.toLocaleString("zh-CN")} 条未读</span>
+            <div className="mn-profile-subactions">
+              <Link href="/me" className="mn-profile-back-link">
+                <ArrowLeft className="h-4 w-4" aria-hidden />
                 个人中心
               </Link>
               {unreadCount ? (
                 <form action={markAllNotificationsReadAction}>
-                  <Button type="submit" variant="outline">
-                    <CheckCheck className="h-4 w-4" />
+                  <Button type="submit" variant="outline" className="mn-profile-button">
+                    <CheckCheck className="h-4 w-4" aria-hidden />
                     全部已读
                   </Button>
                 </form>
               ) : null}
-            </>
-          }
-        />
+            </div>
+          </div>
+        </section>
 
-        <div className="mt-8 space-y-3">
+        <div className="mn-profile-message-list">
           {notifications.map((notification) => (
-            <InteriorPanel
+            <section
               key={notification.id}
-              className={`p-5 ${notification.readAt ? "bg-[var(--mn-panel)]" : "border-[var(--mn-ink)]"}`}
+              className={`mn-profile-message-row ${notification.readAt ? "" : "is-unread"}`}
             >
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     {!notification.readAt ? (
-                      <span className="rounded-md bg-[var(--mn-ink)] px-2 py-0.5 text-xs font-semibold text-white">未读</span>
+                      <span className="mn-profile-pill">未读</span>
                     ) : null}
-                    <h2 className="text-lg font-semibold">{notification.title}</h2>
+                    <h2 className="mn-profile-row-title">{notification.title}</h2>
                   </div>
-                  <p className="mt-2 whitespace-pre-line text-sm leading-6 text-[var(--mn-muted)]">{notification.body}</p>
-                  <p className="mt-3 text-xs text-[var(--mn-muted)]">{formatDate(notification.createdAt)}</p>
+                  <p className="mn-profile-row-copy mt-2 whitespace-pre-line">{notification.body}</p>
+                  <p className="mt-3 text-xs text-[var(--mn-text-faint)]">
+                    {formatDate(notification.createdAt)}
+                  </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
                   {notification.href ? (
-                    <Button asChild variant="outline" size="sm">
+                    <Button asChild variant="outline" size="sm" className="mn-profile-button">
                       <Link href={notification.href}>
-                        <ExternalLink className="h-4 w-4" />
+                        <ExternalLink className="h-4 w-4" aria-hidden />
                         查看
                       </Link>
                     </Button>
@@ -87,20 +90,20 @@ export default async function InboxPage() {
                   {!notification.readAt ? (
                     <form action={markNotificationReadAction}>
                       <input type="hidden" name="notificationId" value={notification.id} />
-                      <Button type="submit" variant="secondary" size="sm">
+                      <Button type="submit" variant="secondary" size="sm" className="mn-profile-button">
                         已读
                       </Button>
                     </form>
                   ) : null}
                 </div>
               </div>
-            </InteriorPanel>
+            </section>
           ))}
 
           {!notifications.length ? (
-            <InteriorPanel className="p-6 text-sm text-[var(--mn-muted)]">
+            <div className="mn-profile-empty">
               还没有消息。之后公开记忆卡审核通过或失败，都会在这里提醒你。
-            </InteriorPanel>
+            </div>
           ) : null}
         </div>
       </InteriorContainer>

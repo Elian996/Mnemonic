@@ -2,6 +2,34 @@
 
 This file is long-term operating context for AI agents working on the Mnemonic project. Read it before making changes. Treat it as project memory and behavior policy, not as a chat summary.
 
+## Mandatory AI Read-First Rule
+
+AI agents working in this repo must read `AI_CONTEXT.md` before making code, data, UI, or deployment changes. This document is the project memory and the user's standing instructions.
+
+Every future rule, principle, product decision, user preference, behavior, workflow, keyboard shortcut, deployment, data, UI change, verification lesson, or gotcha must be synchronized into `AI_CONTEXT.md` in the same task. Do not leave the AI document stale after code changes or after the user clarifies a standing rule.
+
+When the user says "以后", "以后所有", "规则", "原则", "改动", "记住", "AI 文档", or gives a standing preference, treat it as persistent project memory and update this document immediately unless the user explicitly says it is temporary.
+
+User standing instruction, verbatim: "我所提过的要求都写进ai文档包括这一句话". Treat every explicit requirement the user has raised in the project as AI-document material, including this sentence itself.
+
+Project terminology: "三端同步" means synchronizing the project across GitHub, the local workspace, and the production server. Do not use "三端同步" to describe the three personal word-state pages.
+
+When a new behavior is added to a repeated workflow, do not implement it in only one visible place. For the personal word-state workflow, use "三状态列表同步": apply every equivalent operation to `熟练` (`/me/known`), `模糊` (`/me/fuzzy`), and `生词本` (`/me/unknown`). If the same word-card behavior also exists in the level/word browsing surface, update that surface too.
+
+For word-card operations, "每一步操作" includes opening cards, linked-word opening, left/right navigation, `V/O/X` marking, undo buttons, undo shortcuts (`Shift+R`, `⌘Z`/`Ctrl+Z`), save-state UI, deletion/restore flows, close behavior, and any keyboard or mouse equivalent. Do not say a task is complete after testing only one list. Verify all three personal lists, and verify the shared browsing surface when applicable.
+
+Current explicit user requirements captured from the personal-center word-card work:
+
+- Personal-center status cards/modules must open their corresponding pages.
+- Personal-center word-card behavior should match the outside level/word page wherever the same operation exists.
+- `熟练`, `模糊`, and `生词本` are a synchronized three-surface workflow; do not implement or verify only one.
+- Opened word cards must be keyboard-operable: `← / →` switch previous/next, `V / O / X` mark states, and undo works through both the visible undo button and shortcuts.
+- Same-state `V/O/X` cancels the active mark, for example pressing `X` in `生词本` removes the unknown mark.
+- Keyboard shortcuts must work even when browser focus is on the popup/card surface; support physical key codes where needed for Chinese input-method compatibility.
+- The blue selected outline belongs to the underlying word tile/row only, not to the popup card itself.
+- When a popup opens, switches words, or closes, the underlying selected tile/row must remain outlined in blue and scroll toward the page center if it is outside the viewport.
+- All future rules, principles, changes, user preferences, gotchas, and verification lessons must be synchronized to `AI_CONTEXT.md`.
+
 ## Project Identity
 
 Mnemonic is an English vocabulary memory system for Chinese learners.
@@ -37,6 +65,40 @@ Memory cards are study material, not decorative content. They must be compact, a
 The product should feel like a serious personal learning tool: dense, readable, fast, and structurally clear. Avoid marketing-page thinking and avoid decorative UI that competes with the card content.
 
 AI-generated repairs must preserve provenance. If a card was repaired from source files, mark it. If a card was intentionally left empty because no source was found or the source word was wrong, report it.
+
+Current high-priority visual principle from the user, verbatim: "一眼看过去什么都不多,但你点一下刚好就是你需要的,所有东西都像被认真删过。" Treat this as a standing product/design rule. Mnemonic should feel quiet, sparse, deliberate, and useful on click. Do not add modules, marketing copy, decorative gradients, complex illustrations, stacked SaaS cards, noisy icons, or visual explanations unless the user explicitly requests them.
+
+## Desktop And Mobile Product Direction
+
+As of 2026-05-19, the local website should evolve as one URL/shared-data app with separate desktop and mobile UI modes, not two independent sites.
+
+The desktop experience should keep the current dense workflow unless the user explicitly requests a redesign. Mobile may use a different interaction model because the screen is smaller and touch operation is stricter, but it must reuse the same data, auth, APIs, card-editing rules, and core business logic.
+
+Technical scaffold:
+
+- `DeviceModeProvider` in `src/components/device-mode-provider.tsx` detects `desktop`/`mobile` by viewport width, with `mobile` currently defined as `max-width: 767px`.
+- The provider also detects touch-like input and writes `data-device-mode` plus `data-input-mode` onto `<html>` for styling, debugging, and future behavior switches.
+- Use `ResponsiveModeSwitch`, `DesktopModeOnly`, and `MobileModeOnly` from `src/components/responsive-mode-switch.tsx` when a page needs separate desktop/mobile surfaces under the same route.
+- Prefer viewport and interaction constraints over User-Agent sniffing. User-Agent can be used later as an additional hint, but it should not be the primary source of truth.
+- Do not duplicate business logic between desktop and mobile components. Extract shared data loading, persistence, keyboard/marking rules, and card APIs first; split only presentation and interaction layers when the mobile workflow genuinely needs its own shape.
+
+Current mobile vocabulary direction:
+
+- On mobile, `/` and `/words` should open directly into a 3D ring-style vocabulary category navigation, not the traditional desktop landing page. The selected mobile ring visual is the warm paper editorial mockup the user chose: full-screen ivory/paper texture, centered serif-like `选择词库` title, top-right personal-center icon only, and a large tilted cream-glass orbital ring with pearl nodes and soft champagne shadows. The current implementation uses `public/assets/mobile-ring-scene.png` as the non-stretched visual base derived from the chosen mockup, with real clickable category labels/nodes animated above it. The moving labels/nodes must be computed from the same original image coordinate system and rendered through the same object-fit/cropping math as the scene image, so balls stay on the visible ring on real mobile browsers with different address-bar viewport ratios. Do not use free-floating anchor points in viewport percentages. The ring labels must auto-rotate smoothly along the orbital track while remaining clickable; users should not be able to drag or manually control the rotation. Do not use a stretched full-screen screenshot as the UI, because it freezes the ring and compresses the Chinese text on real phone browser viewports. Do not keep inactive decorative controls such as a top-left hamburger menu. The mobile ring page should occupy exactly one visual screen and not scroll to reveal other page backgrounds or bottom strips.
+- Desktop `/` and `/words` should keep the existing structure unless the user explicitly asks to redesign desktop.
+- As of 2026-05-22, desktop `/` was explicitly redesigned as a minimal Apple-style home page: warm off-white background, top-only minimal nav with `首页` and `我的`, serif `mnemonic` hero, one search bar, vocabulary buttons, one horizontal preview card, and one small down arrow. Do not reintroduce a dark left sidebar, `词库`/`词链` nav entries, marketing sections, SaaS card stacks, decorative gradients, or extra modules.
+- Desktop `/` supports day/night/system theme switching from the top bar. The home search must stay in-page: typing into the search bar calls `/api/word-search`, shows a compact result popover, and clicking a result opens that word's card on the home page without changing the URL. The default `memory` preview card's `查看详情` button must also open the `memory` word card in-place, not navigate to `/word/memory`.
+- Home in-page word cards must render real mnemonic card content, including images and `[[word:...]]` related-word links. Do not collapse home cards into plain text if that removes images or links. Related-word links inside the home card should be intercepted and opened as the next in-page home word card rather than navigating away.
+- Vocabulary entry buttons currently include `随机`, `二级`, `三级`, `高考3500`, `四级`, and `六级`. `随机` is not a Prisma `LevelTag`; it is the `/levels/random` route and means an all-word mixed list with no tag filter.
+- Desktop `/levels/[level]` was also redesigned to match the quiet home style: top bar, compact hero, restrained controls, simple word cards/list, no old oversized red rule or decorative illustration. `/levels/random` should reuse this surface and load all words without a level-tag filter. Route transitions from home to level pages must not flash white in dark mode; keep global `--mn-bg` dark-aware and provide restrained loading states when needed.
+- Desktop personal center pages were redesigned on 2026-05-23 to match the quiet home/level style. `/me` should stay as a sparse profile page with a low-noise identity header, one three-part learning status strip (`熟练` / `模糊` / `生词本`), and a thin-line personal directory for `我的记忆卡`, `收件箱`, reviewer/admin entries, and repository access when permitted. Do not restore the old red-rule `InteriorHero`, cubist/dot decoration, SaaS-like module cards, hover shadow card stacks, marketing copy, or busy dashboard layout. Related pages under `/me` should share the same warm off-white/dark-mode profile surface, restrained subhero, row/list treatments, and the existing word-card popup behavior.
+- As of 2026-05-23, `/repository` ("单词仓库") should follow the same quiet sparse study-tool direction: first screen should show only the repository title, essential count/page state, search, compact sort/scope/view controls, and a click-to-expand filter drawer for category/letter filtering. Avoid large hero blocks, heavy white cards, oversized rounded modules, stacked maintenance panels, and noisy explanatory UI. Repository UI/UX refreshes must not alter word/card/import/audit data models or content, and the `RepositoryWorkloadPanel` visual/logic should remain unchanged unless the user explicitly asks to change the work log itself.
+- On internal word browsing/recitation pages, the space bar is a word-card toggle shortcut: when no word card is open it opens the selected word (or the first visible word if none is selected); when a card is open it closes the active card. Do not hijack space while the user is typing or focused on buttons/links/inputs.
+- On mobile level pages (`/levels/...`), the word browser should be list-first/list-only, with the traditional grid/list switching UI hidden.
+- Mobile level word pages should expose global search inside the current level page, using the same `/api/word-search` backend logic. Mobile search must not route to `/search?q=...`; it displays results in the current page, and tapping a result opens that word in the existing word-card popup.
+- Mobile word-card popups should keep the existing `MemoryCardTray` card mechanism. Mobile cards navigate with visible left/right arrow buttons, not swipe gestures and not invisible side tap zones, so related-word links inside the card remain tappable. Do not mark words by mobile card swipe unless the user asks to reintroduce that. While a word-card popup is open, the page behind it must not be manually scrollable or movable; the system may still auto-position the underlying selected word row/card.
+- Mobile word-card marking controls live inside the card header under the word/phonetic area: check = `熟悉/KNOWN`, circle = `模糊/FUZZY`, cross = `生词/UNKNOWN`. Mobile cards should hide/delete the old edit/new-card buttons and memory-card tab controls. Word-card switching on mobile should use the visible previous/next arrow buttons; do not use swipe gestures or invisible side tap zones because they interfere with related-word links.
+- Mobile should not show a theme-toggle button. Day/night appearance always follows the operating system; keep `data-theme="system"` and resolve light/dark from `prefers-color-scheme`.
 
 ## User Profile And Collaboration Style
 
@@ -111,6 +173,7 @@ Extracted text caches currently used by scripts:
 ### Formatting Rules For Cards
 
 - No random line breaks.
+- Single `~` characters in mnemonic text are often used for tone, sound, or OCR/source punctuation such as `嗡~`; they must render as literal text, not Markdown deletion/strikethrough. The renderer should only treat double-tilde `~~text~~` as deletion formatting.
 - Line breaks are allowed when they separate logical sections, for example:
   - `针对第1个元素...`
   - `针对第2个元素...`
@@ -129,6 +192,11 @@ Extracted text caches currently used by scripts:
 - The current popup path uses `/api/word-card/:slug` and `MemoryCardTray`.
 - Reuse `WordCardPopupButton` or the existing popup-fetch pattern when adding new word opening behavior.
 - Dedicated browsing surfaces, such as Codex repaired cards, should open the same word-card popup.
+- Personal-center word-card behavior must stay synchronized across all three state lists: `熟练`, `模糊`, and `生词本`. Any shortcut, button, navigation, undo, mark, delete, restore, open, close, or save-status change added to one of these lists must be added to the other two in the same change.
+- Shared word-card popup behavior must also stay synchronized with the level/word browsing surface (`LevelWordBrowser`) when the same operation exists there.
+- Keyboard contract: opened word-card popups support `← / →` circular previous/next navigation, `V / O / X` marking as known/fuzzy/unknown, and undo via `Shift+R` plus `⌘Z`/`Ctrl+Z`. Same-state keys must behave like pressing the active mark button again: pressing `X` while a word is already in `生词本`, `O` while already in `模糊`, or `V` while already in `熟练` cancels that mark.
+- Selection follow contract: when a word-card popup opens, switches with `← / →`, or closes, the corresponding word tile/row in the underlying list must show the blue selected outline. The popup/card tray itself must not show a blue focus outline. If the selected word is below or above the current viewport, the page must scroll the list so the selected tile/row follows into view and lands around the page center. This applies to `/me/known`, `/me/fuzzy`, `/me/unknown`, and shared level browsing surfaces.
+- Verification contract: for personal-center word-card changes, test `/me/known`, `/me/fuzzy`, and `/me/unknown` separately. A passing test in only one list is not enough.
 
 ### Verification Rules
 
@@ -307,6 +375,7 @@ ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.
 Important production gotchas:
 
 - The site currently runs over plain HTTP. Session cookies must not be forced to `Secure` unless `NEXT_PUBLIC_APP_URL` is HTTPS.
+- When the user is looking at the public server or says the app is server-backed / synchronized across devices, local code edits and local builds are not enough. Deploy the scoped change to `/home/ubuntu/Mnemonic`, rebuild, restart `mnemonic.service`, and verify the server-rendered result before saying the UI is fixed.
 - Official mnemonic cards can only be edited by `EDITOR` or `ADMIN`; normal users can create and edit their own cards.
 - Uploaded images in mnemonic cards are file assets under `public/uploads/`; database restore alone is not enough to display them.
 
@@ -419,6 +488,8 @@ Expected behavior:
 - Codex repaired cards are not automatically considered fixed.
 - Human approval on this route writes the word id into the same `fixedWordIds` state used by the repository logic audit.
 - Batch approval/revocation is supported for the current Codex repair filter.
+- On `/repository`, the logic audit problem area is an English-only tile workflow: click/Space opens or closes the shared word-card tray, `← / →` switch selected problem words, and `V` marks/unmarks the current problem word. If a logic-audit word-card popup is open, `V` marks that card as repaired and automatically switches to the next problem word.
+- Logic audit repair marks must save defensively: every mark still writes to localStorage immediately, and the panel also has an explicit 保存 button plus a 3-second autosave to `/api/mnemonic-logic-audit/repair-progress`, which persists `fixedWordIds` into `/Users/mr.mao/Desktop/Mnemonic/tmp/mnemonic-logic-audit/latest.json` without changing the database schema or word-card data. Writes to this JSON report must be atomic (temp file + rename) so a simultaneous page reload never reads a half-written report.
 
 ## Current P0 Repair Status
 
@@ -689,6 +760,29 @@ The user expects:
 - AI-repaired cards are visibly marked, currently with `Codex 修复`.
 
 Do not replace this with a generic page navigation pattern.
+
+Current Codex P0 repair review UI:
+
+- `/repository/codex-p0-repair` should behave as an AI review desk, not a dense data-admin table.
+- Default mode is a focused one-card review flow: left side shows current website content, right side shows AI repair issue/suggestion/diff, and the bottom action bar handles `通过`, `编辑后通过`, `跳过`, and `标记严重错误`.
+- A compact list mode remains available only for filtering and jumping to a card. It should show only word, simplified error type, priority, status, and an enter-review action.
+- Simplified error categories are: `OCR乱码`, `错别字`, `异常换行`, `内容缺失`, `AI乱改`, `需要人工判断`.
+- Review shortcuts are part of the UI contract: `A` approve, `E` edit, `S` skip, `F` severe, `←/→` previous/next.
+- Editing from this review desk must save a pending review draft/status, not directly overwrite `Word` or `MnemonicEntry` formal data. The current implementation stores non-approved Codex review states in `tmp/mnemonic-logic-audit/latest.json` via `/api/codex-p0-review` and records an `AuditLog`.
+- Approved state still uses `fixedWordIds` in the logic audit report; pending edited/skipped/severe states live in `codexP0ReviewStates`.
+- The global site header is intentionally hidden on this route so the review desk has only its own minimal top bar.
+- The review desk's `返回单词仓库` and `退出审核` links intentionally use normal `<a href="/repository">` full-page navigation instead of Next.js client `Link`, because local Next dev hot-reload can leave a stale `/repository/page.js` chunk and trigger `ChunkLoadError` when returning from this route.
+- If repository-page buttons appear visually present but do nothing, check browser/network for `/_next/static/chunks/app/repository/page.js` 404. That means the local Next dev server is serving stale chunks after route/UI edits. Restart `npm run dev` and clear generated `.next` if needed before debugging button state logic.
+
+Repository logic audit panel interaction:
+
+- The logic-audit problem area on `/repository` should not show dense issue cards by default. Each problem word should render as a compact English-only module.
+- Clicking an English module opens the shared `MemoryCardTray` word-card popup for that word.
+- While a logic-audit word card is open, `← / →` should switch to the previous/next problem word card in the current filtered problem-word list.
+- Closing the popup should leave the corresponding English module selected with the blue outline and scroll it into view, matching the outside word-card follow behavior.
+- Pressing `Space` in the logic-audit problem area opens/closes the selected or active problem word card.
+- Pressing `V` in the logic-audit problem area marks/unmarks the selected or active problem word as repaired.
+- When a logic-audit word card popup is open, pressing `V` should mark the current card as repaired and immediately switch to the next problem word card in the current filtered list.
 
 ## Handoff Protocol
 

@@ -1,21 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  ArrowUpRight,
   Brain,
   CheckCircle2,
   ChevronRight,
-  Circle,
   ClipboardCheck,
   Loader2,
   RotateCcw,
+  Save,
   Search,
   Undo2,
   X
 } from "lucide-react";
 import { MemoryCardTray, type LevelWordItem } from "@/components/level-word-browser";
+import { dispatchRepositoryWorkloadRefresh } from "@/lib/repository-workload";
 import type {
   MnemonicLogicAuditIssue,
   MnemonicLogicAuditReport,
@@ -34,21 +34,19 @@ const issueTypeLabels: Record<MnemonicLogicIssueType, string> = {
   ocr_garbled: "OCR 影响理解",
   contradiction: "前后矛盾",
   incomplete: "内容不完整",
-  codex_p0_review: "Codex 人工复核"
-};
-
-const severityLabels: Record<MnemonicLogicIssueSeverity, string> = {
-  P0: "必须重做",
-  P1: "优先修",
-  P2: "需复核",
-  P3: "轻微"
+  codex_p0_review: "Codex 人工复核",
+  keyword_tree: "关键词：树",
+  keyword_sample_meaning: "关键词：样义",
+  keyword_breakthrough: "关键词：单词突围"
 };
 
 const severityOrder: MnemonicLogicIssueSeverity[] = ["P0", "P1", "P2", "P3"];
 const previewSize = 64;
+const autoSaveDelayMs = 3000;
 const repairProgressStoragePrefix = "mnemonic_logic_audit_repair_progress";
 type IssueTypeFilter = MnemonicLogicIssueType | "all";
 type RepairFilter = "remaining" | "fixed" | "all";
+type RepairSaveState = "saved" | "dirty" | "saving" | "error";
 type RepairHistoryItem = {
   id: string;
   word: string;
@@ -57,6 +55,7 @@ type RepairHistoryItem = {
   nextFixed: boolean;
 };
 type SeverityFilter = MnemonicLogicIssueSeverity | "all";
+type IssueNavigationDirection = "previous" | "next";
 
 export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAuditReport | null }) {
   const issues = report?.issues ?? [];
@@ -66,7 +65,6 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
   const progress = totalEntries ? Math.round((auditedEntries / totalEntries) * 100) : 0;
   const isRunning = report?.status === "running";
   const hasIssues = issues.length > 0;
-  const hasFailures = Boolean(report?.failedBatches.length);
   const issueGroups = useMemo(() => groupIssues(issues), [issues]);
   const defaultIssueType = issueGroups[0]?.type ?? "all";
   const repairStorageKey = repairProgressStorageKey(report);
@@ -86,11 +84,19 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
   const [visibleCount, setVisibleCount] = useState(previewSize);
   const [openCards, setOpenCards] = useState<LevelWordItem[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
   const [loadingSlug, setLoadingSlug] = useState<string | null>(null);
   const [fixedWordIds, setFixedWordIds] = useState<Set<string>>(() => new Set());
   const [repairHistory, setRepairHistory] = useState<RepairHistoryItem[]>([]);
+  const [repairSaveState, setRepairSaveState] = useState<RepairSaveState>("saved");
+  const [repairSaveMessage, setRepairSaveMessage] = useState("已保存");
   const fixedWordIdsRef = useRef(new Set<string>());
   const repairHistoryRef = useRef<RepairHistoryItem[]>([]);
+  const lastSavedRepairSignatureRef = useRef("");
+  const repairSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repairSaveRequestRef = useRef(0);
+  const allowSelectedWordFocusRef = useRef(false);
+  const selectedWordIdRef = useRef<string | null>(null);
   const wordCache = useRef(new Map<string, LevelWordItem>());
   const activeType =
     selectedType === "all" || issueGroups.some((group) => group.type === selectedType)
@@ -117,7 +123,12 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
       }),
     [activeIssues, fixedWordIds, normalizedQuery, repairFilter, selectedSeverity]
   );
-  const visibleIssues = filteredIssues.slice(0, visibleCount);
+  const filteredWordIssues = useMemo(() => uniqueIssuesByWord(filteredIssues), [filteredIssues]);
+  const visibleWordIssues = filteredWordIssues.slice(0, visibleCount);
+  const issueByWordId = useMemo(
+    () => new Map(filteredWordIssues.map((issue) => [issue.wordId, issue] as const)),
+    [filteredWordIssues]
+  );
   const repairScopedActiveIssues = useMemo(
     () =>
       activeIssues.filter((issue) => {
@@ -139,21 +150,148 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
   );
   const activeRemainingWords = Math.max(0, activeTotalWords - activeFixedWords);
   const filteredWordCount = countUniqueWords(filteredIssues);
+  const hasUnsavedRepairProgress =
+    repairProgressSignature(fixedWordIds) !== lastSavedRepairSignatureRef.current;
 
   useEffect(() => {
     setVisibleCount(previewSize);
   }, [activeType, normalizedQuery, repairFilter, selectedSeverity]);
 
   useEffect(() => {
+    selectedWordIdRef.current = selectedWordId;
+  }, [selectedWordId]);
+
+  useEffect(() => {
+    if (!filteredWordIssues.length) {
+      setSelectedWordId(null);
+      return;
+    }
+    if (!selectedWordId || !filteredWordIssues.some((issue) => issue.wordId === selectedWordId)) {
+      setSelectedWordId(filteredWordIssues[0].wordId);
+    }
+  }, [filteredWordIssues, selectedWordId]);
+
+  useEffect(() => {
+    if (!selectedWordId) return;
+    if (!allowSelectedWordFocusRef.current) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      focusRepositoryIssueWord(selectedWordId);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeCardId, selectedWordId, visibleCount]);
+
+  useEffect(() => {
     const nextFixedWordIds = new Set([
       ...reportFixedWordIds,
       ...readRepairProgress(repairStorageKey, allProblemWordIds)
     ]);
+    const savedSignature = repairProgressSignature(reportFixedWordIds);
+    const nextSignature = repairProgressSignature(nextFixedWordIds);
+
+    lastSavedRepairSignatureRef.current = savedSignature;
     fixedWordIdsRef.current = nextFixedWordIds;
     repairHistoryRef.current = [];
     setFixedWordIds(nextFixedWordIds);
     setRepairHistory([]);
+    setRepairSaveState(nextSignature === savedSignature ? "saved" : "dirty");
+    setRepairSaveMessage(
+      nextSignature === savedSignature ? "已保存" : "检测到本地未保存标记，3 秒后自动保存"
+    );
   }, [allProblemWordIds, repairStorageKey, reportFixedWordIds]);
+
+  const persistRepairProgress = useCallback(
+    async (mode: "manual" | "auto" = "manual") => {
+      if (!report || !allProblemWordIds.size) return;
+
+      if (repairSaveTimerRef.current) {
+        clearTimeout(repairSaveTimerRef.current);
+        repairSaveTimerRef.current = null;
+      }
+
+      const requestedFixedWordIds = [...fixedWordIdsRef.current].filter((wordId) =>
+        allProblemWordIds.has(wordId)
+      );
+      const requestedSignature = repairProgressSignature(new Set(requestedFixedWordIds));
+      const requestId = repairSaveRequestRef.current + 1;
+      repairSaveRequestRef.current = requestId;
+
+      setRepairSaveState("saving");
+      setRepairSaveMessage(mode === "auto" ? "自动保存中..." : "保存中...");
+
+      try {
+        const result = await saveRepairProgressSnapshot(requestedFixedWordIds, [
+          ...allProblemWordIds
+        ]);
+        if (requestId !== repairSaveRequestRef.current) return;
+
+        const persistedFixedWordIds = new Set(
+          (result.fixedWordIds ?? requestedFixedWordIds).filter((wordId) =>
+            allProblemWordIds.has(wordId)
+          )
+        );
+        const persistedSignature = repairProgressSignature(persistedFixedWordIds);
+        lastSavedRepairSignatureRef.current = persistedSignature;
+
+        if (repairProgressSignature(fixedWordIdsRef.current) === requestedSignature) {
+          fixedWordIdsRef.current = persistedFixedWordIds;
+          setFixedWordIds(persistedFixedWordIds);
+          writeRepairProgress(repairStorageKey, persistedFixedWordIds);
+        } else {
+          writeRepairProgress(repairStorageKey, fixedWordIdsRef.current);
+        }
+
+        if (repairProgressSignature(fixedWordIdsRef.current) === persistedSignature) {
+          setRepairSaveState("saved");
+          setRepairSaveMessage(`已保存 ${formatClockTime()}`);
+        } else {
+          setRepairSaveState("dirty");
+          setRepairSaveMessage("有新的未保存标记，3 秒后自动保存");
+        }
+        if (result.changedWordIds?.length) {
+          dispatchRepositoryWorkloadRefresh({
+            changedWordIds: result.changedWordIds,
+            source: "repair-progress"
+          });
+        }
+      } catch (error) {
+        console.error(error);
+        if (requestId !== repairSaveRequestRef.current) return;
+        setRepairSaveState("error");
+        setRepairSaveMessage("保存失败，已先保存在本地");
+      }
+    },
+    [allProblemWordIds, repairStorageKey, report]
+  );
+
+  useEffect(() => {
+    if (!report || !allProblemWordIds.size) return;
+
+    const currentSignature = repairProgressSignature(fixedWordIds);
+    if (currentSignature === lastSavedRepairSignatureRef.current) {
+      if (repairSaveTimerRef.current) {
+        clearTimeout(repairSaveTimerRef.current);
+        repairSaveTimerRef.current = null;
+      }
+      setRepairSaveState((current) => (current === "saving" ? current : "saved"));
+      return;
+    }
+
+    setRepairSaveState((current) => (current === "saving" ? current : "dirty"));
+    setRepairSaveMessage("有未保存标记，3 秒后自动保存");
+    if (repairSaveTimerRef.current) clearTimeout(repairSaveTimerRef.current);
+    repairSaveTimerRef.current = setTimeout(() => {
+      void persistRepairProgress("auto");
+    }, autoSaveDelayMs);
+
+    return () => {
+      if (repairSaveTimerRef.current) {
+        clearTimeout(repairSaveTimerRef.current);
+        repairSaveTimerRef.current = null;
+      }
+    };
+  }, [allProblemWordIds.size, fixedWordIds, persistRepairProgress, report]);
 
   const updateRepairHistory = (updater: (current: RepairHistoryItem[]) => RepairHistoryItem[]) => {
     const nextHistory = updater(repairHistoryRef.current);
@@ -161,7 +299,7 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
     setRepairHistory(nextHistory);
   };
 
-  const setWordFixed = (wordId: string, fixed: boolean) => {
+  const setWordFixed = useCallback((wordId: string, fixed: boolean) => {
     const previousFixed = fixedWordIdsRef.current.has(wordId);
     if (previousFixed === fixed) return;
 
@@ -187,7 +325,23 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
         }
       ].slice(-80)
     );
-  };
+  }, [repairStorageKey, wordLabelById]);
+
+  const toggleWordFixed = useCallback(
+    (wordId: string) => {
+      setWordFixed(wordId, !fixedWordIdsRef.current.has(wordId));
+    },
+    [setWordFixed]
+  );
+
+  const ensureIssueVisible = useCallback(
+    (wordId: string) => {
+      const nextIndex = filteredWordIssues.findIndex((issue) => issue.wordId === wordId);
+      if (nextIndex < 0 || nextIndex < visibleCount) return;
+      setVisibleCount(Math.ceil((nextIndex + 1) / previewSize) * previewSize);
+    },
+    [filteredWordIssues, visibleCount]
+  );
 
   const undoLastRepairMark = () => {
     const latest = repairHistoryRef.current.at(-1);
@@ -221,10 +375,164 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
     setRepairFilter("remaining");
   };
 
+  const openWord = useCallback((word: LevelWordItem) => {
+    wordCache.current.set(word.slug, word);
+    setActiveCardId(word.id);
+    if (issueByWordId.has(word.id)) setSelectedWordId(word.id);
+    setOpenCards((current) => [word, ...current.filter((item) => item.id !== word.id)].slice(0, 5));
+  }, [issueByWordId]);
+
+  const loadWordBySlug = useCallback(async (slug: string) => {
+    const cachedWord = wordCache.current.get(slug);
+    if (cachedWord) return cachedWord;
+
+    setLoadingSlug(slug);
+    try {
+      const fetchedWord = await fetchWordCard(slug);
+      wordCache.current.set(fetchedWord.slug, fetchedWord);
+      return fetchedWord;
+    } catch (error) {
+      console.error(error);
+      return null;
+    } finally {
+      setLoadingSlug((current) => (current === slug ? null : current));
+    }
+  }, []);
+
+  const openWordBySlug = useCallback(
+    async (slug: string) => {
+      const word = await loadWordBySlug(slug);
+      if (!word) return false;
+      openWord(word);
+      return true;
+    },
+    [loadWordBySlug, openWord]
+  );
+
+  const openIssueWord = useCallback(
+    async (issue: MnemonicLogicAuditIssue) => {
+      allowSelectedWordFocusRef.current = true;
+      setSelectedWordId(issue.wordId);
+      ensureIssueVisible(issue.wordId);
+      const word = await loadWordBySlug(issue.slug);
+      if (!word) return false;
+      openWord(word);
+      return true;
+    },
+    [ensureIssueVisible, loadWordBySlug, openWord]
+  );
+
+  const activateWordCard = useCallback(
+    (wordId: string | null) => {
+      setActiveCardId(wordId);
+      if (wordId && issueByWordId.has(wordId)) {
+        allowSelectedWordFocusRef.current = true;
+        setSelectedWordId(wordId);
+        ensureIssueVisible(wordId);
+      }
+    },
+    [ensureIssueVisible, issueByWordId]
+  );
+
+  const closeWord = useCallback(
+    (wordId: string) => {
+      allowSelectedWordFocusRef.current = true;
+      setSelectedWordId(wordId);
+      ensureIssueVisible(wordId);
+      setOpenCards((current) => current.filter((word) => word.id !== wordId));
+      window.requestAnimationFrame(() => focusRepositoryIssueWord(wordId));
+    },
+    [ensureIssueVisible]
+  );
+
+  const replaceActiveIssueCard = useCallback(
+    async (currentWordId: string, nextIssue: MnemonicLogicAuditIssue | null) => {
+      if (!nextIssue) {
+        closeWord(currentWordId);
+        setActiveCardId(null);
+        return;
+      }
+
+      allowSelectedWordFocusRef.current = true;
+      setSelectedWordId(nextIssue.wordId);
+      ensureIssueVisible(nextIssue.wordId);
+      const nextWord = await loadWordBySlug(nextIssue.slug);
+      if (!nextWord) return;
+
+      setActiveCardId(nextWord.id);
+      setOpenCards((current) =>
+        [
+          nextWord,
+          ...current.filter((item) => item.id !== currentWordId && item.id !== nextWord.id)
+        ].slice(0, 5)
+      );
+    },
+    [closeWord, ensureIssueVisible, loadWordBySlug]
+  );
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      const targetWordId =
+        activeCardId && issueByWordId.has(activeCardId)
+          ? activeCardId
+          : selectedWordIdRef.current;
+      const targetIssue = targetWordId ? issueByWordId.get(targetWordId) : null;
+
+      if (event.key === " " || event.code === "Space") {
+        if (isTextInputTarget(event.target) || !targetWordId || !targetIssue) return;
+        event.preventDefault();
+        if (openCards.some((word) => word.id === targetWordId)) {
+          const nextActiveCardId =
+            activeCardId === targetWordId
+              ? (openCards.find((word) => word.id !== targetWordId)?.id ?? null)
+              : activeCardId;
+          closeWord(targetWordId);
+          setActiveCardId(nextActiveCardId);
+          return;
+        }
+        void openIssueWord(targetIssue);
+        return;
+      }
+
+      if (
+        (event.key.toLowerCase() === "v" || event.code === "KeyV") &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        if (isTextInputTarget(event.target) || !targetWordId) return;
+        event.preventDefault();
+        if (
+          activeCardId === targetWordId &&
+          targetIssue &&
+          openCards.some((word) => word.id === targetWordId)
+        ) {
+          setWordFixed(targetWordId, true);
+          const nextIssue = adjacentIssue(filteredWordIssues, targetIssue, "next");
+          void replaceActiveIssueCard(targetWordId, nextIssue);
+          return;
+        }
+        toggleWordFixed(targetWordId);
+        return;
+      }
+
       if (openCards.length) return;
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        if (isTextInputTarget(event.target)) return;
+        const currentWordId = selectedWordIdRef.current ?? visibleWordIssues[0]?.wordId;
+        const currentIssue = currentWordId ? issueByWordId.get(currentWordId) : null;
+        const nextIssue = adjacentIssue(
+          visibleWordIssues,
+          currentIssue ?? visibleWordIssues[0] ?? null,
+          event.key === "ArrowLeft" ? "previous" : "next"
+        );
+        if (!nextIssue) return;
+        event.preventDefault();
+        allowSelectedWordFocusRef.current = true;
+        setSelectedWordId(nextIssue.wordId);
+        return;
+      }
       if (event.key.toLowerCase() !== "z" || event.shiftKey || event.altKey) return;
       if (!event.metaKey && !event.ctrlKey) return;
       if (isTextInputTarget(event.target)) return;
@@ -234,49 +542,35 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
       undoLastRepairMark();
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [openCards.length, repairStorageKey]);
-
-  const openWord = (word: LevelWordItem) => {
-    wordCache.current.set(word.slug, word);
-    setActiveCardId(word.id);
-    setOpenCards((current) => [word, ...current.filter((item) => item.id !== word.id)].slice(0, 5));
-  };
-
-  const openWordBySlug = async (slug: string) => {
-    const cachedWord = wordCache.current.get(slug);
-    if (cachedWord) {
-      openWord(cachedWord);
-      return true;
-    }
-
-    setLoadingSlug(slug);
-    try {
-      const fetchedWord = await fetchWordCard(slug);
-      openWord(fetchedWord);
-      return true;
-    } catch (error) {
-      console.error(error);
-      return false;
-    } finally {
-      setLoadingSlug((current) => (current === slug ? null : current));
-    }
-  };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [
+    activeCardId,
+    closeWord,
+    filteredWordIssues,
+    issueByWordId,
+    openCards,
+    openIssueWord,
+    replaceActiveIssueCard,
+    repairStorageKey,
+    setWordFixed,
+    toggleWordFixed,
+    visibleWordIssues
+  ]);
 
   const updateWord = (updatedWord: LevelWordItem) => {
     wordCache.current.set(updatedWord.slug, updatedWord);
     setOpenCards((current) =>
       current.map((word) => (word.id === updatedWord.id ? { ...word, ...updatedWord } : word))
     );
+    dispatchRepositoryWorkloadRefresh({ changedWordIds: [updatedWord.id], source: "word-card" });
   };
 
   return (
     <>
-      <section className="mx-auto max-w-7xl px-5 pt-6 sm:px-8">
+      <section className="mn-repository-panel-wrap mx-auto max-w-7xl px-5 pt-6 sm:px-8">
         <details
-          open={Boolean(report && (isRunning || hasIssues || hasFailures))}
-          className="group overflow-hidden rounded-[28px] bg-white/95 shadow-[0_18px_55px_rgba(0,0,0,0.08)] ring-1 ring-black/5 dark:bg-card/95 dark:shadow-[0_18px_55px_rgba(0,0,0,0.28)] dark:ring-white/10"
+          className="mn-repository-panel group overflow-hidden rounded-[28px] bg-white/95 shadow-[0_18px_55px_rgba(0,0,0,0.08)] ring-1 ring-black/5 dark:bg-card/95 dark:shadow-[0_18px_55px_rgba(0,0,0,0.28)] dark:ring-white/10"
         >
           <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4 px-5 py-4 marker:hidden sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
@@ -346,12 +640,16 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
                 {issues.length ? (
                   <RepairProgress
                     canUndo={repairHistory.length > 0}
+                    canSave={hasUnsavedRepairProgress || repairSaveState === "error"}
                     fixedCount={fixedProblemWords}
                     lastActionWord={repairHistory.at(-1)?.word ?? ""}
                     onClear={clearRepairProgress}
+                    onSave={() => void persistRepairProgress("manual")}
                     onUndo={undoLastRepairMark}
                     progress={repairProgress}
                     remainingCount={remainingProblemWords}
+                    saveMessage={repairSaveMessage}
+                    saveState={repairSaveState}
                     totalCount={totalProblemWords}
                   />
                 ) : null}
@@ -388,7 +686,7 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
                           <p className="mt-1 text-sm text-muted-foreground">
                             {filteredWordCount.toLocaleString("zh-CN")} 个单词 /{" "}
                             {filteredIssues.length.toLocaleString("zh-CN")} 条问题，当前显示{" "}
-                            {visibleIssues.length.toLocaleString("zh-CN")} 条。
+                            {visibleWordIssues.length.toLocaleString("zh-CN")} 个。
                           </p>
                         </div>
                         <div className="flex flex-col gap-2 sm:items-end">
@@ -454,21 +752,27 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
                         ) : null}
                       </div>
 
-                      {visibleIssues.length ? (
+                      {visibleWordIssues.length ? (
                         <>
-                          <div className="mt-3 grid gap-2 xl:grid-cols-2">
-                            {visibleIssues.map((issue) => (
-                              <IssueCard
-                                key={`${issue.entryId}-${issue.issueType}-${issue.reason}`}
+                          <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(116px,1fr))] gap-2">
+                            {visibleWordIssues.map((issue) => (
+                              <IssueWordTile
+                                key={issue.wordId}
                                 issue={issue}
                                 isFixed={fixedWordIds.has(issue.wordId)}
+                                isSelected={selectedWordId === issue.wordId}
                                 isLoading={loadingSlug === issue.slug}
-                                onOpenWord={() => void openWordBySlug(issue.slug)}
-                                onToggleFixed={(fixed) => setWordFixed(issue.wordId, fixed)}
+                                onOpenWord={() => void openIssueWord(issue)}
+                                onSelect={() => {
+                                  allowSelectedWordFocusRef.current = true;
+                                  selectedWordIdRef.current = issue.wordId;
+                                  setSelectedWordId(issue.wordId);
+                                }}
+                                onToggleFixed={() => toggleWordFixed(issue.wordId)}
                               />
                             ))}
                           </div>
-                          {filteredIssues.length > visibleIssues.length ? (
+                          {filteredWordIssues.length > visibleWordIssues.length ? (
                             <div className="mt-4 flex justify-center">
                               <button
                                 type="button"
@@ -478,9 +782,9 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
                                 再显示{" "}
                                 {Math.min(
                                   previewSize,
-                                  filteredIssues.length - visibleIssues.length
+                                  filteredWordIssues.length - visibleWordIssues.length
                                 ).toLocaleString("zh-CN")}{" "}
-                                张
+                                个
                               </button>
                             </div>
                           ) : null}
@@ -511,12 +815,18 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
         <MemoryCardTray
           words={openCards}
           activeCardId={activeCardId}
-          onActivate={setActiveCardId}
-          onClose={(wordId) =>
-            setOpenCards((current) => current.filter((word) => word.id !== wordId))
-          }
+          onActivate={activateWordCard}
+          onClose={closeWord}
           onOpenLinkedWord={openWordBySlug}
           onWordUpdate={updateWord}
+          onNavigateWord={(word, direction) => {
+            const nextIssue = adjacentIssue(
+              filteredWordIssues,
+              issueByWordId.get(word.id) ?? null,
+              direction
+            );
+            void replaceActiveIssueCard(word.id, nextIssue);
+          }}
           isAuthenticated={true}
         />
       ) : null}
@@ -526,23 +836,33 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
 
 function RepairProgress({
   canUndo,
+  canSave,
   fixedCount,
   lastActionWord,
   onClear,
+  onSave,
   onUndo,
   progress,
   remainingCount,
+  saveMessage,
+  saveState,
   totalCount
 }: {
   canUndo: boolean;
+  canSave: boolean;
   fixedCount: number;
   lastActionWord: string;
   onClear: () => void;
+  onSave: () => void;
   onUndo: () => void;
   progress: number;
   remainingCount: number;
+  saveMessage: string;
+  saveState: RepairSaveState;
   totalCount: number;
 }) {
+  const isSaving = saveState === "saving";
+
   return (
     <div className="mt-4 rounded-lg border border-border/70 bg-[#fbfbfd] px-4 py-3 dark:bg-white/5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -561,7 +881,30 @@ function RepairProgress({
             <div className="h-full rounded-full bg-emerald-500" style={{ width: `${progress}%` }} />
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <span
+            className={cn(
+              "rounded-md px-2.5 py-1 text-xs font-semibold",
+              saveState === "error"
+                ? "bg-rose-100 text-rose-800 dark:bg-rose-500/15 dark:text-rose-200"
+                : saveState === "dirty"
+                  ? "bg-amber-100 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200"
+                  : saveState === "saving"
+                    ? "bg-sky-100 text-sky-900 dark:bg-sky-500/15 dark:text-sky-200"
+                    : "bg-emerald-100 text-emerald-900 dark:bg-emerald-500/15 dark:text-emerald-200"
+            )}
+          >
+            {saveMessage}
+          </span>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={!canSave || isSaving}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-foreground transition hover:bg-muted disabled:pointer-events-none disabled:opacity-45 dark:bg-background"
+          >
+            {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            保存
+          </button>
           <span className="rounded-md bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
             {progress}%
           </span>
@@ -702,130 +1045,68 @@ function SeverityButton({
   );
 }
 
-function IssueCard({
+function IssueWordTile({
   issue,
   isFixed,
+  isSelected,
   isLoading,
   onOpenWord,
+  onSelect,
   onToggleFixed
 }: {
   issue: MnemonicLogicAuditIssue;
   isFixed: boolean;
+  isSelected: boolean;
   isLoading: boolean;
   onOpenWord: () => void;
-  onToggleFixed: (fixed: boolean) => void;
+  onSelect: () => void;
+  onToggleFixed: () => void;
 }) {
   return (
-    <article
+    <button
+      type="button"
+      data-repository-issue-word-id={issue.wordId}
+      onClick={onOpenWord}
+      onFocus={onSelect}
+      onKeyDown={(event) => {
+        if (event.defaultPrevented) return;
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onOpenWord();
+          return;
+        }
+        if (event.key === " " || event.code === "Space") {
+          event.preventDefault();
+          event.stopPropagation();
+          onOpenWord();
+          return;
+        }
+        if (event.key.toLowerCase() === "v" || event.code === "KeyV") {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleFixed();
+        }
+      }}
+      title={issue.word}
+      aria-pressed={isFixed}
+      aria-label={`${issue.word}，${isFixed ? "已标记" : "未标记"}，点击或空格打开单词卡，V 标记`}
       className={cn(
-        "min-w-0 rounded-lg border bg-white p-3 shadow-sm transition hover:border-[#0071e3]/40 hover:shadow-md dark:bg-background",
+        "group flex h-14 min-w-0 items-center justify-between gap-2 rounded-lg border bg-white px-3 text-left text-base font-semibold tracking-normal text-foreground transition hover:-translate-y-0.5 hover:border-[#1d1d1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:bg-background dark:hover:border-foreground",
+        isSelected && "border-[#1a73e8] ring-2 ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]",
         isFixed
-          ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-400/30 dark:bg-emerald-500/10"
+          ? "border-emerald-200 bg-emerald-50/70 text-emerald-950 dark:border-emerald-400/30 dark:bg-emerald-500/10 dark:text-emerald-100"
           : "border-border/70"
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={onOpenWord}
-              disabled={isLoading}
-              className="inline-flex min-w-0 items-center gap-2 truncate text-left text-lg font-semibold leading-tight text-foreground transition hover:text-[#06c] disabled:pointer-events-none disabled:opacity-70"
-            >
-              <span className="truncate">{issue.word}</span>
-              {isLoading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
-            </button>
-            {isFixed ? (
-              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                已修
-              </span>
-            ) : null}
-            <span
-              className={cn(
-                "rounded-md px-2 py-0.5 text-xs font-semibold",
-                severityTone(issue.severity, "soft")
-              )}
-            >
-              {issue.severity} · {severityLabels[issue.severity]}
-            </span>
-          </div>
-          {issue.levelTags.length ? (
-            <div className="mt-1 flex flex-wrap gap-1">
-              {issue.levelTags.map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            onClick={() => onToggleFixed(!isFixed)}
-            className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-semibold transition",
-              isFixed
-                ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-200 dark:hover:bg-emerald-500/25"
-                : "bg-muted text-muted-foreground hover:bg-emerald-50 hover:text-emerald-800 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-200"
-            )}
-            aria-pressed={isFixed}
-          >
-            {isFixed ? (
-              <CheckCircle2 className="h-3.5 w-3.5" />
-            ) : (
-              <Circle className="h-3.5 w-3.5" />
-            )}
-            {isFixed ? "已修" : "标记"}
-          </button>
-          <button
-            type="button"
-            onClick={onOpenWord}
-            disabled={isLoading}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-70"
-            aria-label={`打开 ${issue.word}`}
-          >
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ArrowUpRight className="h-4 w-4" />
-            )}
-          </button>
-        </div>
-      </div>
-
-      <dl className="mt-3 space-y-2 text-sm leading-5">
-        <IssueField label="原因" value={issue.reason} strong />
-        <IssueField label="证据" value={issue.evidence} />
-        <IssueField label="建议" value={issue.suggestion} />
-      </dl>
-    </article>
-  );
-}
-
-function IssueField({
-  label,
-  value,
-  strong = false
-}: {
-  label: string;
-  value: string;
-  strong?: boolean;
-}) {
-  if (!value) return null;
-
-  return (
-    <div className="grid gap-1 sm:grid-cols-[3.25rem_minmax(0,1fr)]">
-      <dt className="text-xs font-semibold text-muted-foreground">{label}</dt>
-      <dd className={cn("min-w-0 text-muted-foreground", strong && "font-medium text-foreground")}>
-        {value}
-      </dd>
-    </div>
+      <span className="min-w-0 truncate">{issue.word}</span>
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
+        {isLoading ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : isFixed ? (
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-200" />
+        ) : null}
+      </span>
+    </button>
   );
 }
 
@@ -841,7 +1122,7 @@ function Metric({
   return (
     <div
       className={cn(
-        "rounded-2xl px-4 py-3 ring-1",
+        "mn-repository-metric rounded-2xl px-4 py-3 ring-1",
         tone === "clean" &&
           "bg-emerald-50 text-emerald-900 ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-100 dark:ring-emerald-400/20",
         tone === "danger" &&
@@ -887,6 +1168,49 @@ function countUniqueWords(issues: MnemonicLogicAuditIssue[]) {
   return new Set(issues.map((issue) => issue.wordId)).size;
 }
 
+function uniqueIssuesByWord(issues: MnemonicLogicAuditIssue[]) {
+  const byWordId = new Map<string, MnemonicLogicAuditIssue>();
+  for (const issue of issues) {
+    const existing = byWordId.get(issue.wordId);
+    if (!existing || compareIssue(issue, existing) < 0) {
+      byWordId.set(issue.wordId, issue);
+    }
+  }
+  return [...byWordId.values()].sort(compareIssue);
+}
+
+function adjacentIssue(
+  issues: MnemonicLogicAuditIssue[],
+  issue: Pick<MnemonicLogicAuditIssue, "wordId" | "slug"> | null,
+  direction: IssueNavigationDirection
+) {
+  if (!issues.length) return null;
+  if (!issue) return direction === "next" ? issues[0] : issues[issues.length - 1];
+  const currentIndex = issues.findIndex(
+    (item) => item.wordId === issue.wordId || item.slug === issue.slug
+  );
+  if (currentIndex < 0) return direction === "next" ? issues[0] : issues[issues.length - 1];
+  if (issues.length === 1) return null;
+
+  const step = direction === "next" ? 1 : -1;
+  const nextIndex = (currentIndex + step + issues.length) % issues.length;
+  return issues[nextIndex] ?? null;
+}
+
+function focusRepositoryIssueWord(wordId: string) {
+  const wordElement = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-repository-issue-word-id]")
+  ).find((element) => element.dataset.repositoryIssueWordId === wordId);
+  if (!wordElement) return;
+
+  wordElement.focus({ preventScroll: true });
+  wordElement.scrollIntoView({
+    block: "center",
+    inline: "nearest",
+    behavior: "auto"
+  });
+}
+
 function countFixedWords(wordIds: Set<string>, fixedWordIds: Set<string>) {
   let count = 0;
   for (const wordId of wordIds) {
@@ -919,8 +1243,21 @@ function formatDateTime(value: string) {
   return date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function formatClockTime(date = new Date()) {
+  return date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
 function repairProgressStorageKey(report: MnemonicLogicAuditReport | null) {
   return `${repairProgressStoragePrefix}:${report?.createdAt || report?.updatedAt || "empty"}`;
+}
+
+function repairProgressSignature(wordIds: Set<string>) {
+  return [...wordIds].sort().join("\n");
 }
 
 function readRepairProgress(storageKey: string, validWordIds: Set<string>) {
@@ -975,6 +1312,25 @@ async function fetchWordCard(slug: string) {
   }
 
   return result as LevelWordItem;
+}
+
+async function saveRepairProgressSnapshot(fixedWordIds: string[], scopedWordIds: string[]) {
+  const response = await fetch("/api/mnemonic-logic-audit/repair-progress", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fixedWordIds, scopedWordIds })
+  });
+  const result = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    changedWordIds?: string[];
+    fixedWordIds?: string[];
+  };
+
+  if (!response.ok) {
+    throw new Error(result.error || "审计标记保存失败。");
+  }
+
+  return result;
 }
 
 function severityTone(severity: MnemonicLogicIssueSeverity | undefined, mode: "active" | "soft") {

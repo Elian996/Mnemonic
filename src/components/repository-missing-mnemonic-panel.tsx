@@ -24,12 +24,14 @@ export function RepositoryMissingMnemonicPanel({
   groups,
   isAuthenticated,
   defaultUserCardVisibility = "private",
-  canEditOfficialCards = false
+  canEditOfficialCards = false,
+  canExportMemoryCardImages = false
 }: {
   groups: MissingMnemonicCategory[];
   isAuthenticated: boolean;
   defaultUserCardVisibility?: "private" | "public";
   canEditOfficialCards?: boolean;
+  canExportMemoryCardImages?: boolean;
 }) {
   const totalMissing = groups.reduce((sum, group) => sum + group.missingCount, 0);
   const totalWords = groups.reduce((sum, group) => sum + group.totalCount, 0);
@@ -38,10 +40,9 @@ export function RepositoryMissingMnemonicPanel({
   const missingLevels = groups.filter((group) => group.missingCount > 0).length;
 
   return (
-    <section className="mx-auto max-w-7xl px-5 pt-6 sm:px-8">
+    <section className="mn-repository-panel-wrap mx-auto max-w-7xl px-5 pt-6 sm:px-8">
       <details
-        open={totalMissing > 0}
-        className="group overflow-hidden rounded-[28px] bg-white/95 shadow-[0_18px_55px_rgba(0,0,0,0.08)] ring-1 ring-black/5"
+        className="mn-repository-panel group overflow-hidden rounded-[28px] bg-white/95 shadow-[0_18px_55px_rgba(0,0,0,0.08)] ring-1 ring-black/5"
       >
         <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4 px-5 py-4 marker:hidden sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -78,6 +79,7 @@ export function RepositoryMissingMnemonicPanel({
                 isAuthenticated={isAuthenticated}
                 defaultUserCardVisibility={defaultUserCardVisibility}
                 canEditOfficialCards={canEditOfficialCards}
+                canExportMemoryCardImages={canExportMemoryCardImages}
               />
             ))}
           </div>
@@ -91,6 +93,7 @@ function Metric({ label, value, tone }: { label: string; value: string; tone: "c
   return (
     <div
       className={cn(
+        "mn-repository-metric",
         "rounded-2xl px-4 py-3 ring-1",
         tone === "clean" && "bg-emerald-50 text-emerald-900 ring-emerald-100",
         tone === "attention" && "bg-sky-50 text-sky-900 ring-sky-100",
@@ -107,19 +110,21 @@ function MissingGroup({
   group,
   isAuthenticated,
   defaultUserCardVisibility,
-  canEditOfficialCards
+  canEditOfficialCards,
+  canExportMemoryCardImages
 }: {
   group: MissingMnemonicCategory;
   isAuthenticated: boolean;
   defaultUserCardVisibility: "private" | "public";
   canEditOfficialCards: boolean;
+  canExportMemoryCardImages: boolean;
 }) {
   const completedCount = Math.max(0, group.totalCount - group.missingCount);
   const completionRate = group.totalCount ? Math.round((completedCount / group.totalCount) * 100) : 100;
   const previewLimitReached = group.missingCount > group.words.length;
 
   return (
-    <section className="py-5 first:pt-0 last:pb-0">
+    <section className="mn-repository-missing-group py-5 first:pt-0 last:pb-0">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -133,7 +138,7 @@ function MissingGroup({
         </div>
         <Link
           href={`${group.href}#word-list`}
-          className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-[#1d1d1f] px-4 text-sm font-semibold text-white transition hover:bg-[#2d2d2f]"
+          className="mn-repository-quiet-button inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-[#1d1d1f] px-4 text-sm font-semibold text-white transition hover:bg-[#2d2d2f]"
         >
           <ListChecks className="h-4 w-4" />
           查看全部
@@ -150,13 +155,14 @@ function MissingGroup({
             <span
               key={word.id}
               title={word.meaning}
-              className="inline-flex h-9 max-w-full items-center gap-1 rounded-full border border-sky-200 bg-sky-50 pl-3 pr-1 text-sm font-semibold text-sky-900 transition hover:border-sky-400"
+              className="mn-repository-word-chip inline-flex h-9 max-w-full items-center gap-1 rounded-full border border-sky-200 bg-sky-50 pl-3 pr-1 text-sm font-semibold text-sky-900 transition hover:border-sky-400"
             >
               <WordCardPopupButton
                 slug={word.slug}
                 isAuthenticated={isAuthenticated}
                 defaultUserCardVisibility={defaultUserCardVisibility}
                 canEditOfficialCards={canEditOfficialCards}
+                canExportMemoryCardImages={canExportMemoryCardImages}
                 ariaLabel={`打开 ${word.word} 单词卡弹窗`}
                 className="truncate hover:text-sky-700"
               >

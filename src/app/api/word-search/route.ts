@@ -6,6 +6,9 @@ import { compareWordSearchResults } from "@/lib/word-search";
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim().slice(0, 64) ?? "";
+  const limitParam = Number(url.searchParams.get("limit") ?? "0");
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(Math.floor(limitParam), 80) : null;
+  const queryTake = limit ? Math.max(limit * 8, 160) : 500;
   if (!q) {
     return NextResponse.json({ words: [] }, { headers: { "Cache-Control": "no-store, max-age=0" } });
   }
@@ -36,7 +39,8 @@ export async function GET(request: Request) {
         select: { id: true },
         take: 1
       }
-    }
+    },
+    take: queryTake
   });
 
   const marks = user
@@ -47,9 +51,10 @@ export async function GET(request: Request) {
     : [];
   const markByWordId = new Map(marks.map((mark) => [mark.wordId, mark.state]));
   const sortedWords = words.sort(compareWordSearchResults(q));
+  const visibleWords = limit ? sortedWords.slice(0, limit) : sortedWords;
 
   return NextResponse.json({
-    words: sortedWords.map((word) => ({
+    words: visibleWords.map((word) => ({
       id: word.id,
       word: word.word,
       slug: word.slug,

@@ -5,6 +5,23 @@ export const codexP0RepairHref = "/repository/codex-p0-repair";
 export const codexP0ManualRestoreAction = "CODEX_RESTORE_MANUAL_P0_BEFORE_SOURCE_REPAIR";
 export const codexP0ReviewAuditAction = "CODEX_P0_HUMAN_REVIEW";
 
+export type CodexP0ReviewStatus = "edited" | "skipped" | "severe";
+
+export type CodexP0ReviewDraft = {
+  title?: string;
+  splitText?: string;
+  contentMarkdown?: string;
+  exampleSentence?: string;
+  exampleTranslation?: string;
+};
+
+export type CodexP0ReviewState = {
+  status: CodexP0ReviewStatus;
+  updatedAt: string;
+  note?: string;
+  draft?: CodexP0ReviewDraft;
+};
+
 export function parseCodexP0RepairEditorNote(note: string | null | undefined) {
   const source = note?.match(/(?:^|;\s*)source=([^;\n]+)/)?.[1]?.trim() ?? "来源记录";
   const score = note?.match(/(?:^|;\s*)score=([^;\n]+)/)?.[1]?.trim() ?? "";

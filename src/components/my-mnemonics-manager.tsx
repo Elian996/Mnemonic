@@ -6,7 +6,6 @@ import { MemoryCardTray, type LevelWordItem } from "@/components/level-word-brow
 import { MnemonicEditor } from "@/components/mnemonic-editor";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { InteriorPanel } from "@/components/interior-shell";
 
 type UserMnemonicEntry = {
   id: string;
@@ -126,12 +125,14 @@ export function MyMnemonicsManager({
 
   return (
     <>
-      <div className="mt-8 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <InteriorPanel className="p-5">
+      <div className="mn-profile-tool-grid">
+        <section className="mn-profile-tool-row">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-xl font-semibold">我的卡片</h2>
-              <p className="mt-1 text-sm text-[var(--mn-muted)]">勾选后可批量删除；单张卡可编辑、公开送审、取消公开或前置排序。</p>
+              <h2 className="mn-profile-row-title">我的卡片</h2>
+              <p className="mn-profile-row-copy mt-1">
+                勾选后可批量删除；单张卡可编辑、公开送审、取消公开或前置排序。
+              </p>
             </div>
             <Button
               type="button"
@@ -143,10 +144,10 @@ export function MyMnemonicsManager({
               批量删除
             </Button>
           </div>
-          {message ? <p className="mt-4 text-sm font-semibold text-[var(--mn-muted)]">{message}</p> : null}
-        </InteriorPanel>
+          {message ? <p className="mt-4 text-sm font-semibold text-[var(--mn-text-muted)]">{message}</p> : null}
+        </section>
 
-        <InteriorPanel className="p-5">
+        <section className="mn-profile-tool-row">
           <form
             className="space-y-4"
             onSubmit={(event) => {
@@ -155,10 +156,12 @@ export function MyMnemonicsManager({
             }}
           >
             <div className="flex items-start gap-3">
-              <Settings2 className="mt-1 h-5 w-5 text-[var(--mn-muted)]" />
+              <Settings2 className="mt-1 h-5 w-5 text-[var(--mn-text-muted)]" aria-hidden />
               <div>
-                <h2 className="text-xl font-semibold">默认公开</h2>
-                <p className="mt-1 text-sm leading-6 text-[var(--mn-muted)]">开启后，此后新建或编辑的个人记忆卡会自动提交公开审核。</p>
+                <h2 className="mn-profile-row-title">默认公开</h2>
+                <p className="mn-profile-row-copy mt-1">
+                  开启后，新建或编辑的个人记忆卡会自动提交公开审核。
+                </p>
               </div>
             </div>
             <label className="flex items-center gap-2 text-sm font-semibold">
@@ -170,15 +173,20 @@ export function MyMnemonicsManager({
               />
               {defaultPublicMnemonics ? "已默认公开" : "默认保持私有"}
             </label>
-            <Button type="submit" variant="outline" disabled={pendingAction === "default-public:bulk"}>
+            <Button
+              type="submit"
+              variant="outline"
+              className="mn-profile-button"
+              disabled={pendingAction === "default-public:bulk"}
+            >
               {pendingAction === "default-public:bulk" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               保存设置
             </Button>
           </form>
-        </InteriorPanel>
+        </section>
       </div>
 
-      <div className="mt-5 space-y-4">
+      <div className="mn-profile-mnemonic-list">
         {sortedEntries.map((entry) => {
           const mode = defaultPublicMnemonics || entry.sourceType === "USER_PUBLIC" ? "public" : "private";
           const isPublicSelected = entry.sourceType === "USER_PUBLIC";
@@ -189,7 +197,7 @@ export function MyMnemonicsManager({
           const archiveActionId = `archive:${entry.id}`;
 
           return (
-            <InteriorPanel key={entry.id} className="p-5">
+            <article key={entry.id} className="mn-profile-mnemonic-item">
               <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.9fr)]">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-3">
@@ -204,17 +212,17 @@ export function MyMnemonicsManager({
                       type="button"
                       onClick={() => void openWordBySlug(entry.targetWord.slug)}
                       disabled={Boolean(loadingSlug)}
-                      className="inline-flex items-center gap-2 text-xl font-semibold text-[var(--mn-ink)] transition hover:text-[var(--mn-red)] disabled:pointer-events-none disabled:opacity-60"
+                      className="mn-profile-word-link inline-flex items-center gap-2 disabled:pointer-events-none disabled:opacity-60"
                     >
                       {entry.targetWord.word}
                       {loadingSlug === entry.targetWord.slug ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                     </button>
                     <StatusBadge value={entry.status} />
-                    <span className="rounded-md border border-[var(--mn-line)] px-2 py-0.5 text-xs text-[var(--mn-muted)]">
+                    <span className="mn-profile-visibility-pill">
                       {isPublicSelected ? "已选择公开" : "私有"}
                     </span>
                   </div>
-                  <p className="mt-3 text-sm leading-6 text-[var(--mn-muted)]">{entry.targetWord.shortMeaningCn}</p>
+                  <p className="mn-profile-row-copy mt-3">{entry.targetWord.shortMeaningCn}</p>
                   <p className="mt-2 line-clamp-3 whitespace-pre-line text-sm leading-6">{entry.plainText}</p>
                   {entry.reviewNote && entry.status === "REJECTED" ? (
                     <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-950">
@@ -226,6 +234,7 @@ export function MyMnemonicsManager({
                       type="button"
                       variant={publicIntent === "private" ? "outline" : "default"}
                       size="sm"
+                      className="mn-profile-button"
                       disabled={Boolean(pendingAction)}
                       onClick={() => void mutate({ action: "set-public", entryId: entry.id, intent: publicIntent }, publicIntent === "private" ? "已改为私有。" : "已提交公开审核。")}
                     >
@@ -236,6 +245,7 @@ export function MyMnemonicsManager({
                       type="button"
                       variant="outline"
                       size="sm"
+                      className="mn-profile-button"
                       disabled={Boolean(pendingAction)}
                       onClick={() => void mutate({ action: "promote", entryId: entry.id }, "已前置，只影响你的账号。")}
                     >
@@ -255,7 +265,7 @@ export function MyMnemonicsManager({
                   </div>
                 </div>
 
-                <details className="rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] p-4">
+                <details className="mn-profile-editor-details">
                   <summary className="cursor-pointer text-sm font-semibold">编辑这张记忆卡</summary>
                   <div className="mt-4">
                     <MnemonicEditor
@@ -269,14 +279,14 @@ export function MyMnemonicsManager({
                   </div>
                 </details>
               </div>
-            </InteriorPanel>
+            </article>
           );
         })}
 
         {!entries.length ? (
-          <InteriorPanel className="p-6 text-sm leading-6 text-[var(--mn-muted)]">
+          <div className="mn-profile-empty">
             你还没有创建个人记忆卡。可以先进入任意单词页，在「我的记忆卡」里保存一张。
-          </InteriorPanel>
+          </div>
         ) : null}
       </div>
 

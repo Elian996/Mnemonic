@@ -20,10 +20,12 @@ const searchIconClassName = "h-4 w-4";
 
 export function WordMemorySearch({
   isAuthenticated,
-  canEditOfficialCards = false
+  canEditOfficialCards = false,
+  canExportMemoryCardImages = false
 }: {
   isAuthenticated: boolean;
   canEditOfficialCards?: boolean;
+  canExportMemoryCardImages?: boolean;
 }) {
   const [q, setQ] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
@@ -263,6 +265,7 @@ export function WordMemorySearch({
           onWordUpdate={updateWord}
           isAuthenticated={isAuthenticated}
           canEditOfficialCards={canEditOfficialCards}
+          canExportMemoryCardImages={canExportMemoryCardImages}
         />
       ) : null}
     </>

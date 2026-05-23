@@ -8,7 +8,7 @@ import { UsageManualButton } from "@/components/usage-manual-button";
 import { WordMarkSaveButton } from "@/components/word-mark-save-button";
 import { getSessionUser, requireUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-import { InteriorContainer, InteriorHero, InteriorPage } from "@/components/interior-shell";
+import { InteriorContainer, InteriorPage } from "@/components/interior-shell";
 
 type SectionKey = "known" | "fuzzy" | "unknown";
 
@@ -64,7 +64,7 @@ export default async function MeSectionPage({
   const Icon = section.icon;
 
   return (
-    <InteriorPage>
+    <InteriorPage className="mn-profile-page">
       <PublicTopBar
         user={user}
         breadcrumbs={[
@@ -72,6 +72,7 @@ export default async function MeSectionPage({
           { label: "个人中心", href: "/me" },
           { label: section.label }
         ]}
+        themeVariant="segmented"
         actionsSlot={
           <>
             <UsageManualButton />
@@ -81,25 +82,25 @@ export default async function MeSectionPage({
       />
 
       <InteriorContainer wide>
-        <InteriorHero
-          eyebrow="profile"
-          title={
-            <span className="inline-flex items-center gap-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-md border border-[var(--mn-line)] text-[var(--mn-muted)]">
-                <Icon className="h-5 w-5" />
+        <section className="mn-profile-subhero" aria-labelledby="profile-section-title">
+          <div className="mn-profile-subhero-copy">
+            <p className="mn-profile-eyebrow">profile</p>
+            <h1 id="profile-section-title" className="mn-profile-subtitle-heading">
+              <span className="mn-profile-heading-icon">
+                <Icon className="h-5 w-5" aria-hidden />
               </span>
               {section.label}
-            </span>
-          }
-          description="点击单词打开记忆卡；可排序，也可进入编辑模式删除。"
-          meta={`${words.length.toLocaleString("zh-CN")} 个单词`}
-          actions={
-            <Link href="/me" className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--mn-muted)] transition hover:text-[var(--mn-ink)]">
-              <ArrowLeft className="h-4 w-4" />
+            </h1>
+            <p className="mn-profile-subcopy">点击单词打开记忆卡；可排序，也可进入编辑模式删除。</p>
+          </div>
+          <div className="mn-profile-subhero-side">
+            <span>{words.length.toLocaleString("zh-CN")} 个单词</span>
+            <Link href="/me" className="mn-profile-back-link">
+              <ArrowLeft className="h-4 w-4" aria-hidden />
               个人中心
             </Link>
-          }
-        />
+          </div>
+        </section>
 
         <ProfileWordList words={words} emptyText={section.emptyText} kind={rawSection} />
       </InteriorContainer>

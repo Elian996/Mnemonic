@@ -19,7 +19,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
     return NextResponse.json({ error: "word not found" }, { status: 404 });
   }
 
-  return NextResponse.json(toWordCardPayload(word, user), { headers: noStoreHeaders });
+  return NextResponse.json(await toWordCardPayload(word, user), { headers: noStoreHeaders });
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ slug: string }> }) {
@@ -128,7 +128,7 @@ async function createMnemonicCard(slug: string, body: Record<string, unknown>) {
   revalidateWordSurfaces(word);
   if (!createsOfficialCard) revalidateUserMnemonicPaths(word.slug);
   const updatedWord = await findWordCardRecord(word.slug, user.id);
-  return NextResponse.json({ word: updatedWord ? toWordCardPayload(updatedWord, user) : null, activeEntryId }, { headers: noStoreHeaders });
+  return NextResponse.json({ word: updatedWord ? await toWordCardPayload(updatedWord, user) : null, activeEntryId }, { headers: noStoreHeaders });
 }
 
 async function updateMnemonicCard(slug: string, body: Record<string, unknown>) {
@@ -219,7 +219,7 @@ async function updateMnemonicCard(slug: string, body: Record<string, unknown>) {
     revalidateUserMnemonicPaths(entry.targetWord.slug);
   }
   const updatedWord = await findWordCardRecord(entry.targetWord.slug, user.id);
-  return NextResponse.json({ word: updatedWord ? toWordCardPayload(updatedWord, user) : null, activeEntryId: entry.id }, { headers: noStoreHeaders });
+  return NextResponse.json({ word: updatedWord ? await toWordCardPayload(updatedWord, user) : null, activeEntryId: entry.id }, { headers: noStoreHeaders });
 }
 
 async function updateWordMeaning(slug: string, body: Record<string, unknown>) {
@@ -269,7 +269,7 @@ async function updateWordMeaning(slug: string, body: Record<string, unknown>) {
   const updatedWord = await findWordCardRecord(updatedWordRecord.slug, user.id);
   return NextResponse.json(
     {
-      word: updatedWord ? toWordCardPayload(updatedWord, user) : null,
+      word: updatedWord ? await toWordCardPayload(updatedWord, user) : null,
       activeEntryId: updatedWord?.mnemonicEntries[0]?.id ?? ""
     },
     { headers: noStoreHeaders }
@@ -332,7 +332,7 @@ async function promoteMnemonicCard(slug: string, body: Record<string, unknown>) 
   revalidateWordSurfaces(entry.targetWord);
   if (entry.sourceType !== MnemonicSourceType.OFFICIAL) revalidateUserMnemonicPaths(entry.targetWord.slug);
   const updatedWord = await findWordCardRecord(entry.targetWord.slug, user.id);
-  return NextResponse.json({ word: updatedWord ? toWordCardPayload(updatedWord, user) : null, activeEntryId: entry.id }, { headers: noStoreHeaders });
+  return NextResponse.json({ word: updatedWord ? await toWordCardPayload(updatedWord, user) : null, activeEntryId: entry.id }, { headers: noStoreHeaders });
 }
 
 type MnemonicOrderEntry = {
@@ -480,7 +480,7 @@ async function deleteMnemonicCard(slug: string, body: Record<string, unknown>) {
   if (targetEntry.sourceType !== MnemonicSourceType.OFFICIAL) revalidateUserMnemonicPaths(word.slug);
   const updatedWord = await findWordCardRecord(word.slug, user.id);
   const activeEntryId = updatedWord?.mnemonicEntries[0]?.id ?? "";
-  return NextResponse.json({ word: updatedWord ? toWordCardPayload(updatedWord, user) : null, activeEntryId }, { headers: noStoreHeaders });
+  return NextResponse.json({ word: updatedWord ? await toWordCardPayload(updatedWord, user) : null, activeEntryId }, { headers: noStoreHeaders });
 }
 
 async function restoreMnemonicCard(slug: string, body: Record<string, unknown>) {
@@ -575,7 +575,7 @@ async function restoreMnemonicCard(slug: string, body: Record<string, unknown>) 
   revalidateWordSurfaces(word);
   if (targetEntry.sourceType !== MnemonicSourceType.OFFICIAL) revalidateUserMnemonicPaths(word.slug);
   const updatedWord = await findWordCardRecord(word.slug, user.id);
-  return NextResponse.json({ word: updatedWord ? toWordCardPayload(updatedWord, user) : null, activeEntryId: entryId }, { headers: noStoreHeaders });
+  return NextResponse.json({ word: updatedWord ? await toWordCardPayload(updatedWord, user) : null, activeEntryId: entryId }, { headers: noStoreHeaders });
 }
 
 async function findWordCardRecord(slug: string, userId: string | null) {
@@ -652,20 +652,22 @@ function forbiddenResponse(message: string) {
 
 type WordCardRecord = NonNullable<Awaited<ReturnType<typeof findWordCardRecord>>>;
 
-function toWordCardPayload(word: WordCardRecord, user: Pick<User, "id" | "role"> | null) {
+async function toWordCardPayload(word: WordCardRecord, user: Pick<User, "id" | "role"> | null) {
   const markState = word.wordMarks[0]?.state ?? null;
   const orderedEntries = [...word.mnemonicEntries].sort((first, second) => compareMnemonicEntries(first, second, user?.id ?? null));
-  const mnemonics = orderedEntries.map((entry) => ({
-    id: entry.id,
-    title: entry.title,
-    splitText: entry.splitText || "",
-    contentMarkdown: entry.contentMarkdown,
-    contentHtml: entry.contentHtml,
-    plainText: entry.plainText,
-    sourceType: entry.sourceType,
-    status: entry.status,
-    canEdit: canEditMnemonic(user, entry)
-  }));
+  const mnemonics = await Promise.all(
+    orderedEntries.map(async (entry) => ({
+      id: entry.id,
+      title: entry.title,
+      splitText: entry.splitText || "",
+      contentMarkdown: entry.contentMarkdown,
+      contentHtml: await renderMnemonicMarkdown(entry.contentMarkdown),
+      plainText: entry.plainText,
+      sourceType: entry.sourceType,
+      status: entry.status,
+      canEdit: canEditMnemonic(user, entry)
+    }))
+  );
 
   return {
     id: word.id,
@@ -682,6 +684,7 @@ function toWordCardPayload(word: WordCardRecord, user: Pick<User, "id" | "role">
     markState,
     isBookmarked: word.bookmarks.length > 0 || markState === "UNKNOWN",
     canEditOfficialCards: hasRole(user, UserRole.EDITOR),
+    canExportMemoryCardImages: hasRole(user, UserRole.ADMIN),
     mnemonic: mnemonics[0] ?? null,
     mnemonics
   };

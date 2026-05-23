@@ -1,4 +1,4 @@
-import { marked } from "marked";
+import { marked, Tokenizer, type Tokens } from "marked";
 import { JSDOM } from "jsdom";
 import DOMPurify from "dompurify";
 import { MemoryNodeType } from "@prisma/client";
@@ -7,6 +7,18 @@ import { ParsedWikiLink, replaceWikiLinks } from "./parser";
 
 const window = new JSDOM("").window;
 const purify = DOMPurify(window);
+const mnemonicTokenizer = new Tokenizer();
+
+mnemonicTokenizer.del = function parseDoubleTildeDelete(src: string): Tokens.Del | undefined {
+  const match = /^~~(?=\S)([\s\S]*?\S)~~(?!~)/.exec(src);
+  if (!match) return undefined;
+  return {
+    type: "del",
+    raw: match[0],
+    text: match[1],
+    tokens: this.lexer.inlineTokens(match[1])
+  };
+};
 
 export function wikiLinkHref(link: Pick<ParsedWikiLink, "nodeType" | "target">) {
   const type = link.nodeType ?? MemoryNodeType.BRIDGE;
@@ -27,7 +39,12 @@ export function renderWikiLink(link: ParsedWikiLink) {
 
 export async function renderMnemonicMarkdown(markdown: string) {
   const withLinks = replaceWikiLinks(markdown, renderWikiLink);
-  const html = await marked.parse(withLinks, { async: false, breaks: true, gfm: true });
+  const html = await marked.parse(withLinks, {
+    async: false,
+    breaks: true,
+    gfm: true,
+    tokenizer: mnemonicTokenizer
+  });
   return purify.sanitize(html, {
     ADD_ATTR: ["data-node-type", "data-target", "src", "alt", "title"],
     ADD_TAGS: ["img"]

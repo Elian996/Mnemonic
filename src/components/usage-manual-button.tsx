@@ -1,7 +1,20 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { BookOpen, Check, Circle, Keyboard, MousePointer2, Palette, Pencil, Save, Star, Type, Volume2, X } from "lucide-react";
+import {
+  BookOpen,
+  Check,
+  Circle,
+  Keyboard,
+  MousePointer2,
+  Palette,
+  Pencil,
+  Save,
+  Star,
+  Type,
+  Volume2,
+  X
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const sections = [
@@ -39,9 +52,9 @@ const sections = [
     title: "快捷键",
     icon: Keyboard,
     items: [
-      "Shift+R 撤销上一次单词标记，也会撤销最近删除的记忆卡。",
+      "Shift+R 或 ⌘Z / Ctrl+Z 撤销上一次单词标记，也会撤销最近删除的记忆卡。",
       "Shift+S 手动保存未保存的单词标记。",
-      "打开记忆卡后，← / → 切换上一个或下一个单词；V / O / X 标记熟练、模糊、陌生，V 会自动跳到下一个。",
+      "打开记忆卡后，← / → 循环切换上一个或下一个单词；V / O / X 标记熟练、模糊、陌生，V 会自动跳到下一个。",
       "Shift++ / Shift+- 调节单词卡字号。",
       "Esc 关闭当前弹窗、菜单或字号面板。"
     ]
@@ -79,9 +92,23 @@ function IconLegend() {
     { icon: Check, label: "熟练", className: "border-[#b9e5ce] bg-[#effaf3] text-[#168458]" },
     { icon: Circle, label: "模糊", className: "border-[#ead38a] bg-[#fff8df] text-[#9a6a00]" },
     { icon: X, label: "陌生", className: "border-[#f1b8ad] bg-[#fff1ee] text-[#c2412d]" },
-    { icon: Star, label: "加入生词/模糊", className: "border-[#e7c766] bg-[#fff8df] text-[#d89a00]" },
-    { icon: Volume2, label: "播放读音", className: "border-[#d8dde6] bg-white text-[#69717f] dark:border-border dark:bg-card dark:text-muted-foreground" },
-    { icon: Type, label: "字号", className: "border-[#d8dde6] bg-white text-[#171a1f] dark:border-border dark:bg-card dark:text-foreground" }
+    {
+      icon: Star,
+      label: "加入生词/模糊",
+      className: "border-[#e7c766] bg-[#fff8df] text-[#d89a00]"
+    },
+    {
+      icon: Volume2,
+      label: "播放读音",
+      className:
+        "border-[#d8dde6] bg-white text-[#69717f] dark:border-border dark:bg-card dark:text-muted-foreground"
+    },
+    {
+      icon: Type,
+      label: "字号",
+      className:
+        "border-[#d8dde6] bg-white text-[#171a1f] dark:border-border dark:bg-card dark:text-foreground"
+    }
   ];
 
   return (
@@ -89,8 +116,16 @@ function IconLegend() {
       {items.map((item) => {
         const Icon = item.icon;
         return (
-          <div key={item.label} className="flex items-center gap-2 text-sm font-medium text-[#323741] dark:text-foreground/85">
-            <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-md border", item.className)}>
+          <div
+            key={item.label}
+            className="flex items-center gap-2 text-sm font-medium text-[#323741] dark:text-foreground/85"
+          >
+            <span
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border",
+                item.className
+              )}
+            >
               <Icon className="h-4 w-4" />
             </span>
             {item.label}
@@ -129,7 +164,10 @@ export function UsageManualButton() {
       </button>
 
       {isOpen ? (
-        <div className="fixed inset-0 z-[90] bg-[#171a1f]/25 p-4 backdrop-blur-[2px] dark:bg-black/55" role="presentation">
+        <div
+          className="fixed inset-0 z-[90] bg-[#171a1f]/25 p-4 backdrop-blur-[2px] dark:bg-black/55"
+          role="presentation"
+        >
           <div
             role="dialog"
             aria-modal="true"
@@ -159,7 +197,9 @@ export function UsageManualButton() {
 
             <div className="min-h-0 overflow-y-auto p-5">
               <section className="rounded-lg border border-[#d8dde6] p-4 dark:border-border">
-                <h3 className="text-sm font-semibold text-[#69717f] dark:text-muted-foreground">图标速查</h3>
+                <h3 className="text-sm font-semibold text-[#69717f] dark:text-muted-foreground">
+                  图标速查
+                </h3>
                 <div className="mt-3">
                   <IconLegend />
                 </div>
@@ -169,7 +209,10 @@ export function UsageManualButton() {
                 {sections.map((section) => {
                   const Icon = section.icon;
                   return (
-                    <section key={section.title} className="rounded-lg border border-[#d8dde6] p-4 dark:border-border">
+                    <section
+                      key={section.title}
+                      className="rounded-lg border border-[#d8dde6] p-4 dark:border-border"
+                    >
                       <h3 className="flex items-center gap-2 text-base font-semibold">
                         <Icon className="h-4 w-4 text-[#c2412d] dark:text-red-300" />
                         {section.title}
@@ -195,10 +238,16 @@ export function UsageManualButton() {
 }
 
 function renderShortcutText(text: string) {
-  const parts = text.split(/(Shift\+R|Shift\+S|Shift\+\+|Shift\+-|Cmd\+Z|Ctrl\+Z|Esc|A-Z|Z-A|Aa|←|→|\bV\b|\bO\b|\bX\b)/g);
+  const parts = text.split(
+    /(Shift\+R|Shift\+S|Shift\+\+|Shift\+-|⌘Z|Cmd\+Z|Ctrl\+Z|Esc|A-Z|Z-A|Aa|←|→|\bV\b|\bO\b|\bX\b)/g
+  );
   return parts.map((part, index) => {
     if (!part) return null;
-    if (/^(Shift\+R|Shift\+S|Shift\+\+|Shift\+-|Cmd\+Z|Ctrl\+Z|Esc|A-Z|Z-A|Aa|←|→|V|O|X)$/u.test(part)) {
+    if (
+      /^(Shift\+R|Shift\+S|Shift\+\+|Shift\+-|⌘Z|Cmd\+Z|Ctrl\+Z|Esc|A-Z|Z-A|Aa|←|→|V|O|X)$/u.test(
+        part
+      )
+    ) {
       return <KeyBadge key={`${part}-${index}`}>{part}</KeyBadge>;
     }
     return part;

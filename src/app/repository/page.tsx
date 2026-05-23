@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, Eye, EyeOff, Grid2X2, Inbox, List, Plus, Search, Volume2, Wrench } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, Grid2X2, Inbox, List, Plus, Search, Volume2, Wrench } from "lucide-react";
 import { LevelTag, MnemonicSourceType, MnemonicStatus, Prisma, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
@@ -12,6 +12,7 @@ import { RepositoryBulkDeleteList } from "@/components/repository-bulk-delete-li
 import { RepositoryDeleteButton } from "@/components/repository-delete-button";
 import { RepositoryContaminationPanel } from "@/components/repository-contamination-panel";
 import { RepositoryLogicAuditPanel } from "@/components/repository-logic-audit-panel";
+import { RepositoryWorkloadPanel, type RepositoryWorkloadRecord } from "@/components/repository-workload-panel";
 import { WordCardPopupButton } from "@/components/word-card-popup-button";
 import {
   RepositoryMissingMnemonicPanel,
@@ -19,9 +20,11 @@ import {
   type MissingMnemonicCategory
 } from "@/components/repository-missing-mnemonic-panel";
 import { AutoSubmitSelect } from "@/components/auto-submit-select";
+import { PublicTopBar } from "@/components/public-top-bar";
 import { vocabCategories } from "@/lib/vocab-categories";
 import { getMnemonicContaminationAudit } from "@/lib/mnemonic-contamination-audit";
 import { readMnemonicLogicAuditReport } from "@/lib/mnemonic-logic-audit-report";
+import { repairProgressWorkloadAuditAction } from "@/lib/repository-workload";
 import { bulkDeleteWordsFromRepositoryAction } from "@/lib/services/word-service";
 import {
   codexP0ManualRestoreAction,
@@ -45,6 +48,25 @@ type RepositorySearchParams = {
 const alphabet = "abcdefghijklmnopqrstuvwxyz".split("");
 const pageSize = 120;
 const missingMnemonicPreviewSize = 24;
+const workloadStartUtc = new Date(Date.UTC(2026, 4, 17, 16, 0, 0));
+const halfDayMs = 12 * 60 * 60 * 1000;
+const shanghaiOffsetMs = 8 * 60 * 60 * 1000;
+const workloadAuditActions = [
+  "MNEMONIC_QUICK_CREATE",
+  "MNEMONIC_QUICK_UPDATE",
+  "MNEMONIC_QUICK_DELETE",
+  "MNEMONIC_QUICK_RESTORE",
+  "USER_MNEMONIC_QUICK_CREATE",
+  "USER_MNEMONIC_QUICK_UPDATE",
+  "USER_MNEMONIC_QUICK_DELETE",
+  "USER_MNEMONIC_QUICK_RESTORE",
+  "WORD_MEANING_QUICK_UPDATE",
+  "WORD_CREATE",
+  "WORD_UPDATE",
+  "MNEMONIC_SAVE",
+  "MNEMONIC_ARCHIVE",
+  repairProgressWorkloadAuditAction
+];
 
 const categoryLinks = vocabCategories;
 
@@ -80,6 +102,7 @@ export default async function RepositoryPage({
   const user = await getSessionUser();
   const canUseImports = hasRole(user, UserRole.ADMIN);
   const canEditOfficialCards = hasRole(user, UserRole.EDITOR);
+  const canExportMemoryCardImages = hasRole(user, UserRole.ADMIN);
 
   const baseWhere = (levelFilter: LevelTag | ""): Prisma.WordWhereInput => ({
     AND: [
@@ -109,7 +132,7 @@ export default async function RepositoryPage({
           ? { word: "desc" as const }
           : { createdAt: "desc" as const };
 
-  const [totalCount, categoryCounts, importDraftCount, codexP0RepairCount, codexP0EmptyLogs, codexP0ManualRestoreLogs, contaminationGroups, missingMnemonicGroups, logicAuditReport] = await Promise.all([
+  const [totalCount, categoryCounts, importDraftCount, codexP0RepairCount, codexP0EmptyLogs, codexP0ManualRestoreLogs, contaminationGroups, missingMnemonicGroups, logicAuditReport, workloadRecords] = await Promise.all([
     prisma.word.count({ where }),
     Promise.all(
       categoryLinks.map(async (category) => [
@@ -135,7 +158,8 @@ export default async function RepositoryPage({
     }),
     getMnemonicContaminationAudit(),
     getMissingMnemonicGroups(),
-    readMnemonicLogicAuditReport()
+    readMnemonicLogicAuditReport(),
+    getRepositoryWorkloadRecords(user?.id ?? null)
   ]);
   const codexP0ManuallyRestoredWordIds = new Set(codexP0ManualRestoreLogs.map((log) => log.entityId));
   const codexP0EmptyCount = new Set(
@@ -175,85 +199,87 @@ export default async function RepositoryPage({
   const listReturnTo = `${hrefFor({ page: String(currentPage) })}#word-list`;
 
   return (
-    <main className="min-h-[calc(100vh-4rem)] bg-[#f5f5f7] text-[#1d1d1f]">
-      <section className="mx-auto max-w-7xl px-5 pb-8 pt-10 sm:px-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-medium text-[#6e6e73]">mnemonic</p>
-            <h1 className="mt-2 text-5xl font-semibold tracking-normal sm:text-6xl">单词仓库</h1>
-            <p className="mt-3 text-lg text-[#6e6e73]">
-              {activeCategory ? `${activeCategory.label} ` : ""}
-              {letter && !q ? `${letter.toUpperCase()} 开头 ` : ""}
-              共 {totalCount} 词，当前第 {currentPage} / {totalPages} 页。
-            </p>
-            {activeCategory ? <p className="mt-2 text-sm text-[#6e6e73]">{activeCategory.description}</p> : null}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+    <main className="mn-repository-page">
+      <PublicTopBar
+        user={user}
+        breadcrumbs={[
+          { label: "首页", href: "/" },
+          { label: "我的", href: "/me" },
+          { label: "单词仓库" }
+        ]}
+        actionsSlot={
+          <>
             {canUseImports ? (
-              <Button asChild variant="outline" className="rounded-full border-white bg-white px-5 text-[#1d1d1f] shadow-sm hover:bg-[#f5f5f7]">
-                <Link href="/imports" className="inline-flex items-center gap-2">
-                  <Inbox className="h-4 w-4" />
-                  <span>草稿箱</span>
-                  {importDraftCount ? <span className="text-[#6e6e73]">· {importDraftCount}</span> : null}
-                </Link>
-              </Button>
+              <Link href="/imports" className="mn-repository-top-action">
+                <Inbox className="h-4 w-4" />
+                <span>草稿</span>
+                {importDraftCount ? <span className="mn-repository-top-count">{importDraftCount}</span> : null}
+              </Link>
             ) : null}
-            <Button asChild variant="outline" className="rounded-full border-white bg-white px-5 text-[#1d1d1f] shadow-sm hover:bg-[#f5f5f7]">
-              <Link href={codexP0RepairHref} className="inline-flex items-center gap-2">
-                <Wrench className="h-4 w-4" />
-                <span>Codex 修复</span>
-                {codexP0RepairCount || codexP0EmptyCount ? (
-                  <span className="text-[#6e6e73]">
-                    · {codexP0RepairCount}
-                    {codexP0EmptyCount ? ` + ${codexP0EmptyCount}留空` : ""}
-                  </span>
-                ) : null}
-              </Link>
-            </Button>
-            <Button asChild className="rounded-full bg-[#0071e3] px-5 hover:bg-[#0077ed]">
-              <Link href="/#new-word" className="inline-flex items-center gap-2">
-                <Plus className="h-4 w-4" />
-                新建单词
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" className="rounded-full px-5 text-[#06c] hover:bg-white">
-              <Link href="/" className="inline-flex items-center gap-2">
-                <ArrowLeft className="h-4 w-4" />
-                返回工作台
-              </Link>
-            </Button>
+            <Link href={codexP0RepairHref} className="mn-repository-top-action">
+              <Wrench className="h-4 w-4" />
+              <span>修复</span>
+              {codexP0RepairCount || codexP0EmptyCount ? (
+                <span className="mn-repository-top-count">
+                  {codexP0RepairCount}
+                  {codexP0EmptyCount ? `+${codexP0EmptyCount}` : ""}
+                </span>
+              ) : null}
+            </Link>
+            <Link href="/#new-word" className="mn-repository-top-action is-primary" aria-label="新建单词">
+              <Plus className="h-4 w-4" />
+              <span>新建</span>
+            </Link>
+          </>
+        }
+      />
+
+      <section className="mn-repository-container">
+        <header className="mn-repository-hero">
+          <div className="mn-repository-hero-copy">
+            <p className="mn-repository-eyebrow">repository</p>
+            <h1 className="mn-repository-title">单词仓库</h1>
+            <p className="mn-repository-description">
+              {activeCategory ? `${activeCategory.label} ` : "全部词库 "}
+              {letter && !q ? ` / ${letter.toUpperCase()} 开头` : ""}
+              {q ? ` / 搜索「${q}」` : ""}
+            </p>
+            {activeCategory ? <p className="mn-repository-category-note">{activeCategory.description}</p> : null}
           </div>
-        </div>
+          <div className="mn-repository-hero-meta" aria-label="仓库分页">
+            <span>{totalCount.toLocaleString("zh-CN")} 词</span>
+            <span>第 {currentPage} / {totalPages} 页</span>
+          </div>
+        </header>
+
         {deletedCount ? (
-          <div className="mt-6 rounded-2xl bg-white px-4 py-3 text-sm text-emerald-700 shadow-sm">
+          <div className="mn-repository-notice">
             已删除 {deletedCount} 个单词。其他卡片数据保持不变。
           </div>
         ) : null}
-      </section>
 
-      <section className="mx-auto max-w-7xl px-5 sm:px-8">
-        <form className="rounded-[28px] bg-white/90 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.08)] ring-1 ring-black/5 backdrop-blur" action="/repository">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <form className="mn-repository-toolbar" action="/repository">
+          <div className="mn-repository-search-field">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
             <Input
               name="q"
               defaultValue={q}
-              className="h-12 rounded-2xl border-0 bg-[#f5f5f7] pl-10 text-base shadow-none focus-visible:ring-1"
+              className="mn-repository-search-input"
               placeholder="搜索单词或释义..."
             />
           </div>
           <input type="hidden" name="view" value={view} />
           <input type="hidden" name="reveal" value={reveal ? "1" : ""} />
           <input type="hidden" name="level" value={level} />
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <AutoSubmitSelect name="sort" defaultValue={sort} className="h-11 rounded-full border-0 bg-[#f5f5f7] px-5 text-sm text-[#1d1d1f] outline-none ring-1 ring-black/5">
+          <div className="mn-repository-control-row">
+            <AutoSubmitSelect name="sort" defaultValue={sort} className="mn-repository-select">
               {Object.entries(sortLabels).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
                 </option>
               ))}
             </AutoSubmitSelect>
-            <AutoSubmitSelect name="scope" defaultValue={scope} className="h-11 rounded-full border-0 bg-[#f5f5f7] px-5 text-sm text-[#1d1d1f] outline-none ring-1 ring-black/5">
+            <AutoSubmitSelect name="scope" defaultValue={scope} className="mn-repository-select">
               {Object.entries(scopeLabels).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
@@ -261,72 +287,79 @@ export default async function RepositoryPage({
               ))}
             </AutoSubmitSelect>
             <input type="hidden" name="letter" value={letter} />
-            <Button asChild variant={view === "grid" ? "default" : "ghost"} size="icon" className={cn("h-11 w-11 rounded-full", view === "grid" ? "bg-[#1d1d1f]" : "bg-[#f5f5f7]")}>
+            <Button asChild variant={view === "grid" ? "default" : "ghost"} size="icon" className={cn("mn-repository-icon-button", view === "grid" && "is-active")}>
               <Link href={hrefFor({ view: "grid", page: "1" })} aria-label="网格视图">
                 <Grid2X2 className="h-4 w-4" />
               </Link>
             </Button>
-            <Button asChild variant={view === "list" ? "default" : "ghost"} size="icon" className={cn("h-11 w-11 rounded-full", view === "list" ? "bg-[#1d1d1f]" : "bg-[#f5f5f7]")}>
+            <Button asChild variant={view === "list" ? "default" : "ghost"} size="icon" className={cn("mn-repository-icon-button", view === "list" && "is-active")}>
               <Link href={hrefFor({ view: "list", page: "1" })} aria-label="列表视图">
                 <List className="h-4 w-4" />
               </Link>
             </Button>
-            <Button asChild variant={reveal ? "default" : "ghost"} size="icon" className={cn("h-11 w-11 rounded-full", reveal ? "bg-[#1d1d1f]" : "bg-[#f5f5f7]")}>
+            <Button asChild variant={reveal ? "default" : "ghost"} size="icon" className={cn("mn-repository-icon-button", reveal && "is-active")}>
               <Link href={hrefFor({ reveal: reveal ? "" : "1", page: "1" })} aria-label={reveal ? "隐藏释义与记忆方法" : "显示释义与记忆方法"}>
                 {reveal ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
               </Link>
             </Button>
           </div>
         </form>
-        <nav className="mt-5 flex flex-wrap gap-3" aria-label="类别入口">
-          <Link
-            href={hrefFor({ level: "", letter: "", page: "1" })}
-            className={cn(
-              "text-sm font-semibold transition",
-              !level ? "text-[#1d1d1f]" : "text-[#06c] hover:text-[#004c99]"
-            )}
-          >
-            全部词库
-          </Link>
-          {categoryLinks.map((category) => (
+
+        <details className="mn-repository-filter-drawer" open={Boolean(level || letter)}>
+          <summary>
+            <span>筛选范围</span>
+            <span className="mn-repository-filter-state">
+              {activeCategory?.label ?? "全部词库"}
+              {letter ? ` / ${letter.toUpperCase()}` : ""}
+            </span>
+            <ChevronDown className="h-4 w-4" />
+          </summary>
+          <div className="mn-repository-filter-content">
+            <nav className="mn-repository-category-nav" aria-label="类别入口">
+              <Link
+                href={hrefFor({ level: "", letter: "", page: "1" })}
+                className={cn("mn-repository-filter-link", !level && "is-active")}
+              >
+                全部词库
+                <span>{totalCount.toLocaleString("zh-CN")}</span>
+              </Link>
+              {categoryLinks.map((category) => (
+                <Link
+                  key={category.tag}
+                  href={hrefFor({ level: category.tag, letter: "", page: "1" })}
+                  title={category.description}
+                  className={cn("mn-repository-filter-link", level === category.tag && "is-active")}
+                >
+                  {category.label}
+                  <span>{(countByCategory[category.tag] ?? 0).toLocaleString("zh-CN")}</span>
+                </Link>
+              ))}
+            </nav>
+            <nav className="mn-repository-letter-nav" aria-label="字母索引">
             <Link
-              key={category.tag}
-              href={hrefFor({ level: category.tag, letter: "", page: "1" })}
-              title={category.description}
+              href={hrefFor({ q: "", letter: "", page: "1" })}
               className={cn(
-                "text-sm font-semibold transition",
-                level === category.tag ? "text-[#1d1d1f]" : "text-[#06c] hover:text-[#004c99]"
+                "mn-repository-letter-link",
+                !letter && "is-active"
               )}
             >
-              {category.label} · {countByCategory[category.tag] ?? 0}
+              全部
             </Link>
-          ))}
-        </nav>
-        <nav className="mt-4 flex gap-2 overflow-x-auto pb-2" aria-label="字母索引">
-          <Link
-            href={hrefFor({ q: "", letter: "", page: "1" })}
-            className={cn(
-              "flex h-9 min-w-14 items-center justify-center border-b-2 px-1 text-sm font-semibold transition",
-              !letter ? "border-[#1d1d1f] text-[#1d1d1f]" : "border-transparent text-[#6e6e73] hover:text-[#1d1d1f]"
-            )}
-          >
-            全部
-          </Link>
-          {alphabet.map((item) => (
-            <Link
-              key={item}
-              href={hrefFor({ q: "", letter: item, page: "1" })}
-              className={cn(
-                "flex h-9 min-w-7 items-center justify-center border-b-2 text-sm font-semibold uppercase transition",
-                letter === item ? "border-[#1d1d1f] text-[#1d1d1f]" : "border-transparent text-[#6e6e73] hover:text-[#1d1d1f]"
-              )}
-            >
-              {item}
-            </Link>
-          ))}
-        </nav>
+              {alphabet.map((item) => (
+                <Link
+                  key={item}
+                  href={hrefFor({ q: "", letter: item, page: "1" })}
+                  className={cn("mn-repository-letter-link uppercase", letter === item && "is-active")}
+                >
+                  {item}
+                </Link>
+              ))}
+            </nav>
+          </div>
+        </details>
       </section>
 
+      <RepositoryWorkloadPanel records={workloadRecords} />
       <RepositoryLogicAuditPanel report={logicAuditReport} />
       <RepositoryContaminationPanel groups={contaminationGroups} />
       <RepositoryMissingMnemonicPanel
@@ -334,33 +367,35 @@ export default async function RepositoryPage({
         isAuthenticated={Boolean(user)}
         defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
         canEditOfficialCards={canEditOfficialCards}
+        canExportMemoryCardImages={canExportMemoryCardImages}
       />
 
-      <section id="word-list" className="mx-auto max-w-7xl scroll-mt-24 px-5 py-8 sm:px-8">
+      <section id="word-list" className="mn-repository-word-section">
         {words.length === 0 ? (
-          <div className="rounded-[28px] bg-white p-12 text-center text-muted-foreground shadow-sm">
+          <div className="mn-repository-empty-state">
             没有找到卡片。可以换个关键词，或回到工作台新建单词。
           </div>
         ) : view === "grid" ? (
-          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div className="mn-repository-word-grid">
             {words.map((word) => (
-              <article key={word.id} className="rounded-[28px] bg-white p-5 shadow-sm ring-1 ring-black/5 transition hover:-translate-y-0.5 hover:shadow-xl">
-                <div className="flex items-start justify-between gap-2">
+              <article key={word.id} className="mn-repository-word-card">
+                <div className="mn-repository-word-card-head">
                   <WordCardPopupButton
                     slug={word.slug}
                     isAuthenticated={Boolean(user)}
                     defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
                     canEditOfficialCards={canEditOfficialCards}
+                    canExportMemoryCardImages={canExportMemoryCardImages}
                     ariaLabel={`打开 ${word.word} 单词卡弹窗`}
-                    className="min-w-0 text-3xl font-semibold leading-tight hover:text-[#06c]"
+                    className="word-card-title min-w-0 hover:text-[var(--mn-accent)]"
                   >
                     <span className="block truncate">{word.word}</span>
                   </WordCardPopupButton>
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="mn-repository-word-actions">
                     {word.audioUsUrl || word.audioUkUrl ? (
                       <a
                         href={word.audioUsUrl || word.audioUkUrl || "#"}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                        className="mn-repository-row-icon"
                         aria-label={`播放 ${word.word}`}
                       >
                         <Volume2 className="h-4 w-4" />
@@ -374,23 +409,22 @@ export default async function RepositoryPage({
                   isAuthenticated={Boolean(user)}
                   defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
                   canEditOfficialCards={canEditOfficialCards}
+                  canExportMemoryCardImages={canExportMemoryCardImages}
                   ariaLabel={`打开 ${word.word} 单词卡弹窗`}
-                  className="mt-4 block w-full"
+                  className="mn-repository-word-preview"
                 >
-                  <div className="flex min-h-36 items-center justify-center rounded-3xl bg-[#f5f5f7] p-5 text-center text-sm font-medium text-muted-foreground">
-                    {reveal ? (
-                      <div className="space-y-2 text-left">
-                        <p className="line-clamp-3">{word.shortMeaningCn || word.meaningCn}</p>
-                        <p className="line-clamp-3 text-xs">{word.mnemonicEntries[0]?.splitText || word.mnemonicEntries[0]?.plainText || "还没有记忆方法"}</p>
-                      </div>
-                    ) : (
-                      "释义与带你背已隐藏"
-                    )}
-                  </div>
+                  {reveal ? (
+                    <span>
+                      <span className="line-clamp-2">{word.shortMeaningCn || word.meaningCn || "未填写释义"}</span>
+                      <span className="mt-2 line-clamp-2 text-xs text-[var(--mn-text-faint)]">{word.mnemonicEntries[0]?.splitText || word.mnemonicEntries[0]?.plainText || "还没有记忆方法"}</span>
+                    </span>
+                  ) : (
+                    <span className="mn-repository-hidden-line">已隐藏释义</span>
+                  )}
                 </WordCardPopupButton>
-                <div className="mt-4 flex items-center justify-between border-t border-black/5 pt-3 text-sm text-muted-foreground">
+                <div className="mn-repository-word-card-foot">
                   <span>{word._count.mnemonicEntries} 张卡</span>
-                  <Badge>{word._count.mnemonicEntries ? "正文词" : "待补全"}</Badge>
+                  <Badge className="mn-repository-status-badge">{word._count.mnemonicEntries ? "正文词" : "待补全"}</Badge>
                 </div>
               </article>
             ))}
@@ -410,17 +444,18 @@ export default async function RepositoryPage({
             isAuthenticated={Boolean(user)}
             defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
             canEditOfficialCards={canEditOfficialCards}
+            canExportMemoryCardImages={canExportMemoryCardImages}
           />
         )}
         {totalPages > 1 ? (
-          <div className="mt-8 flex items-center justify-center gap-3">
-            <Button asChild variant="outline" className="rounded-full px-5" aria-disabled={currentPage <= 1}>
+          <div className="mn-repository-pagination">
+            <Button asChild variant="outline" className="mn-repository-page-button" aria-disabled={currentPage <= 1}>
               <Link href={currentPage <= 1 ? hrefFor({ page: "1" }) : hrefFor({ page: String(currentPage - 1) })}>上一页</Link>
             </Button>
-            <span className="text-sm text-muted-foreground">
+            <span>
               第 {currentPage} / {totalPages} 页
             </span>
-            <Button asChild variant="outline" className="rounded-full px-5" aria-disabled={currentPage >= totalPages}>
+            <Button asChild variant="outline" className="mn-repository-page-button" aria-disabled={currentPage >= totalPages}>
               <Link href={currentPage >= totalPages ? hrefFor({ page: String(totalPages) }) : hrefFor({ page: String(currentPage + 1) })}>下一页</Link>
             </Button>
           </div>
@@ -473,5 +508,201 @@ function missingMnemonicWhere(tag: LevelTag): Prisma.WordWhereInput {
   return {
     levelTags: { has: tag },
     mnemonicEntries: { none: { status: { not: "ARCHIVED" as const } } }
+  };
+}
+
+async function getRepositoryWorkloadRecords(actorId: string | null): Promise<RepositoryWorkloadRecord[]> {
+  if (!actorId) return [];
+
+  const now = new Date();
+  const endUtc = nextWorkloadBoundary(now);
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      actorId,
+      action: { in: workloadAuditActions },
+      createdAt: { gte: workloadStartUtc, lt: endUtc }
+    },
+    select: {
+      action: true,
+      entityType: true,
+      entityId: true,
+      metadataJson: true,
+      createdAt: true
+    },
+    orderBy: { createdAt: "asc" }
+  });
+
+  const entryIdsNeedingLookup = new Set<string>();
+  for (const log of logs) {
+    if (log.entityType === "MnemonicEntry" && !metadataWordIds(log.metadataJson).length) {
+      entryIdsNeedingLookup.add(log.entityId);
+    }
+  }
+
+  const entryWordIds = entryIdsNeedingLookup.size
+    ? new Map(
+        (
+          await prisma.mnemonicEntry.findMany({
+            where: { id: { in: [...entryIdsNeedingLookup] } },
+            select: { id: true, targetWordId: true }
+          })
+        ).map((entry) => [entry.id, entry.targetWordId])
+      )
+    : new Map<string, string>();
+
+  const resolvedLogs = logs.flatMap((log) =>
+    logWordIds(log, entryWordIds).map((wordId) => ({
+      ...log,
+      wordId
+    }))
+  );
+
+  const wordIds = [...new Set(resolvedLogs.map((log) => log.wordId))];
+  const wordNames = wordIds.length
+    ? new Map(
+        (
+          await prisma.word.findMany({
+            where: { id: { in: wordIds } },
+            select: { id: true, word: true }
+          })
+        ).map((word) => [word.id, word.word])
+      )
+    : new Map<string, string>();
+
+  const buckets = buildWorkloadBuckets(endUtc);
+  for (const log of resolvedLogs) {
+    const bucketIndex = Math.floor((log.createdAt.getTime() - workloadStartUtc.getTime()) / halfDayMs);
+    const bucket = buckets[bucketIndex];
+    if (!bucket) continue;
+
+    const isRepairProgressEvent = log.action === repairProgressWorkloadAuditAction;
+    bucket.eventCount += 1;
+    if (isRepairProgressEvent) {
+      bucket.repairEventCount += 1;
+    } else if (log.action.includes("MNEMONIC")) {
+      bucket.cardEventCount += 1;
+    } else if (log.action.startsWith("WORD_")) {
+      bucket.meaningEventCount += 1;
+    }
+    bucket.firstEditedAt ??= log.createdAt;
+    bucket.lastEditedAt = log.createdAt;
+
+    if (!bucket.wordIds.has(log.wordId)) {
+      bucket.wordIds.add(log.wordId);
+      bucket.sampleWords.push(wordNames.get(log.wordId) ?? "unknown");
+    }
+  }
+
+  return buckets.map((bucket) => ({
+    id: bucket.id,
+    label: bucket.label,
+    rangeLabel: bucket.rangeLabel,
+    wordCount: bucket.wordIds.size,
+    eventCount: bucket.eventCount,
+    cardEventCount: bucket.cardEventCount,
+    meaningEventCount: bucket.meaningEventCount,
+    repairEventCount: bucket.repairEventCount,
+    sampleWords: bucket.sampleWords,
+    firstEditLabel: bucket.firstEditedAt ? formatShanghaiTime(bucket.firstEditedAt) : null,
+    lastEditLabel: bucket.lastEditedAt ? formatShanghaiTime(bucket.lastEditedAt) : null,
+    isStart: bucket.startsAt.getTime() === workloadStartUtc.getTime(),
+    isCurrent: now >= bucket.startsAt && now < bucket.endsAt
+  }));
+}
+
+type WorkloadBucket = {
+  id: string;
+  label: string;
+  rangeLabel: string;
+  startsAt: Date;
+  endsAt: Date;
+  wordIds: Set<string>;
+  sampleWords: string[];
+  eventCount: number;
+  cardEventCount: number;
+  meaningEventCount: number;
+  repairEventCount: number;
+  firstEditedAt: Date | null;
+  lastEditedAt: Date | null;
+};
+
+function buildWorkloadBuckets(endUtc: Date): WorkloadBucket[] {
+  const bucketCount = Math.max(1, Math.ceil((endUtc.getTime() - workloadStartUtc.getTime()) / halfDayMs));
+  return Array.from({ length: bucketCount }, (_, index) => {
+    const startsAt = new Date(workloadStartUtc.getTime() + index * halfDayMs);
+    const endsAt = new Date(startsAt.getTime() + halfDayMs);
+    const localParts = shanghaiParts(startsAt);
+    const isMorning = localParts.hour < 12;
+    const rangeLabel = isMorning ? "00:00-12:00" : "12:00-24:00";
+    const monthDay = `${String(localParts.month).padStart(2, "0")}/${String(localParts.day).padStart(2, "0")}`;
+
+    return {
+      id: startsAt.toISOString(),
+      label: `${localParts.year}/${monthDay} ${isMorning ? "上午" : "下午"}`,
+      rangeLabel,
+      startsAt,
+      endsAt,
+      wordIds: new Set<string>(),
+      sampleWords: [],
+      eventCount: 0,
+      cardEventCount: 0,
+      meaningEventCount: 0,
+      repairEventCount: 0,
+      firstEditedAt: null,
+      lastEditedAt: null
+    };
+  });
+}
+
+function nextWorkloadBoundary(now: Date) {
+  if (now < workloadStartUtc) return new Date(workloadStartUtc.getTime() + halfDayMs);
+  const elapsed = now.getTime() - workloadStartUtc.getTime();
+  return new Date(workloadStartUtc.getTime() + (Math.floor(elapsed / halfDayMs) + 1) * halfDayMs);
+}
+
+function logWordIds(
+  log: { entityType: string; entityId: string; metadataJson: Prisma.JsonValue | null },
+  entryWordIds: Map<string, string>
+) {
+  if (log.entityType === "Word") return [log.entityId];
+  const wordIds = metadataWordIds(log.metadataJson);
+  if (wordIds.length) return wordIds;
+  if (log.entityType === "MnemonicEntry") {
+    const wordId = entryWordIds.get(log.entityId);
+    return wordId ? [wordId] : [];
+  }
+  return [];
+}
+
+function metadataWordIds(metadata: Prisma.JsonValue | null) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
+  const value = metadata as Record<string, unknown>;
+  const wordIds = new Set<string>();
+  if (typeof value.wordId === "string" && value.wordId) {
+    wordIds.add(value.wordId);
+  }
+  for (const key of ["wordIds", "changedWordIds", "appliedWordIds"]) {
+    const rawIds = value[key];
+    if (!Array.isArray(rawIds)) continue;
+    for (const wordId of rawIds) {
+      if (typeof wordId === "string" && wordId) wordIds.add(wordId);
+    }
+  }
+  return [...wordIds];
+}
+
+function formatShanghaiTime(date: Date) {
+  const parts = shanghaiParts(date);
+  return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
+}
+
+function shanghaiParts(date: Date) {
+  const local = new Date(date.getTime() + shanghaiOffsetMs);
+  return {
+    year: local.getUTCFullYear(),
+    month: local.getUTCMonth() + 1,
+    day: local.getUTCDate(),
+    hour: local.getUTCHours(),
+    minute: local.getUTCMinutes()
   };
 }

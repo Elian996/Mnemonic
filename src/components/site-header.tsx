@@ -21,6 +21,8 @@ export function SiteHeader({
     pathname === "/" ||
     pathname === "/words" ||
     pathname.startsWith("/levels/") ||
+    pathname === "/repository" ||
+    pathname === "/repository/codex-p0-repair" ||
     pathname === "/login" ||
     pathname === "/register" ||
     pathname === "/me" ||
@@ -52,12 +54,19 @@ export function SiteHeader({
         </nav>
         <div className="flex items-center gap-1.5">
           <CommandSearch />
-          <Button asChild variant="ghost" size="icon" className="h-9 w-9 rounded-md text-[#3b352e] hover:bg-[#ebe5da] hover:text-[#13110e] dark:text-[#c7bfb2] dark:hover:bg-[#24211d] dark:hover:text-[#f5f1e8]">
+          <Button
+            asChild
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 rounded-md text-[#3b352e] hover:bg-[#ebe5da] hover:text-[#13110e] dark:text-[#c7bfb2] dark:hover:bg-[#24211d] dark:hover:text-[#f5f1e8]"
+          >
             <Link href="/search">
               <Search className="h-4 w-4" />
             </Link>
           </Button>
-          <ThemeToggle initialTheme={initialTheme} />
+          <div className="hidden md:block">
+            <ThemeToggle initialTheme={initialTheme} />
+          </div>
         </div>
       </div>
     </header>

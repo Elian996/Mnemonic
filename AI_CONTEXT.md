@@ -312,17 +312,19 @@ Server:
 - OS: Ubuntu 22.04
 - Public IP: `124.221.123.13`
 - SSH user: `ubuntu`
-- SSH private key path on the user's Mac: `/Users/mr.mao/Downloads/123.pem`
-- Registered SSH public key:
+- Preferred SSH private key path on the user's Mac: `/Users/mr.mao/.ssh/mnemonic_tencent_lighthouse`
+- Legacy SSH private key path from older notes: `/Users/mr.mao/Downloads/123.pem` (missing on 2026-05-23)
+- Registered SSH public keys:
 
 ```text
 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCYlDj8rPeV8tHO6C01IhsXV1T13Qfbj+7XHvZvoSJQ+yqdwGbA1OHbBVmev/6sO7+4k0R+SRRBbt/d8c8vWibp3tkTN5axjEoAnX/y7KqWtjW92g3D+ruXkqpe2adGA7djMsOTVtwjt1zB7RDp7NzG+w66v+7aRqFX5uUtEQ4RibNoDEnvZ4Jfx5+VyjQMh7jgVSW7xNrZIfpgRBhCHKnSKtFmLJhGezv8OBaU4hAqAXa9IowGzffPV+ojeUBYPYNLBMMyA22Q+Iq/1eSgKtnRlaw9dDmIsqthUZLDWx5vfZFhzWZhuuvAT4KsPkMT6LHOj+YRhiEocBg7Hvs6+Kc9 skey-9yox8hu9
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILVZJj5FH4bLLAupyLVxPshQvFZYZFSp9VzqgGWeE3qQ codex-mnemonic-20260523
 ```
 
 SSH command:
 
 ```bash
-ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13
 ```
 
 Server app layout:
@@ -338,10 +340,10 @@ Server app layout:
 Common production commands:
 
 ```bash
-ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'cd ~/Mnemonic && git status --short'
-ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'sudo systemctl status mnemonic --no-pager --full'
-ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'cd ~/Mnemonic && npm run build && sudo systemctl restart mnemonic'
-ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'journalctl -u mnemonic -n 120 --no-pager'
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 'cd ~/Mnemonic && git status --short'
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 'sudo systemctl status mnemonic --no-pager --full'
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 'cd ~/Mnemonic && npm run build && sudo systemctl restart mnemonic'
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 'journalctl -u mnemonic -n 120 --no-pager'
 ```
 
 Database:
@@ -354,7 +356,7 @@ Database:
 Safe DB command pattern:
 
 ```bash
-ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
   'cd ~/Mnemonic && set -a && . ./.env && set +a && DBURL=${DATABASE_URL%\?schema=public} && psql "$DBURL" -c "select count(*) from \"Word\";"'
 ```
 
@@ -366,14 +368,17 @@ Production data notes from 2026-05-16:
 
 ```bash
 rsync -av --ignore-existing \
-  -e 'ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes' \
+  -e 'ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes' \
   public/uploads/ ubuntu@124.221.123.13:/home/ubuntu/Mnemonic/public/uploads/
 
-ssh -i /Users/mr.mao/Downloads/123.pem -o IdentitiesOnly=yes ubuntu@124.221.123.13 'sudo systemctl restart mnemonic'
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 'sudo systemctl restart mnemonic'
 ```
 
 Important production gotchas:
 
+- 2026-05-23 deployment recovery: HTTPS GitHub push was completed via GitHub Desktop, and production was recovered after an interrupted `npm install`/build caused high memory pressure. A 2GB swapfile now exists on the server at `/swapfile` and is persisted in `/etc/fstab`; keep it for future Next.js builds on this 2GB instance.
+- 2026-05-23 server drift: before pulling commit `433a899`, uncommitted server-only changes were preserved with `git stash push -u -m pre-sync-20260523-server-local-changes`. Do not drop this stash unless the user explicitly confirms it is obsolete.
+- Recommended production deploy flow on this server: `sudo systemctl stop mnemonic`, `npm ci --no-audit --no-fund`, `npm run db:deploy`, `NODE_OPTIONS=--max_old_space_size=1536 npm run build`, then `sudo systemctl restart mnemonic` and verify `http://124.221.123.13:3000/`.
 - The site currently runs over plain HTTP. Session cookies must not be forced to `Secure` unless `NEXT_PUBLIC_APP_URL` is HTTPS.
 - When the user is looking at the public server or says the app is server-backed / synchronized across devices, local code edits and local builds are not enough. Deploy the scoped change to `/home/ubuntu/Mnemonic`, rebuild, restart `mnemonic.service`, and verify the server-rendered result before saying the UI is fixed.
 - Official mnemonic cards can only be edited by `EDITOR` or `ADMIN`; normal users can create and edit their own cards.

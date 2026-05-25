@@ -105,7 +105,8 @@ export default async function MePage() {
             href: "/repository",
             label: "单词仓库",
             value: totalWordCount,
-            icon: Database
+            icon: Database,
+            prefetch: false
           }
         ]
       : []),
@@ -170,6 +171,7 @@ export default async function MePage() {
                 label={module.label}
                 value={module.value}
                 icon={module.icon}
+                prefetch={"prefetch" in module ? module.prefetch : undefined}
               />
             ))}
           </div>
@@ -208,15 +210,17 @@ function DirectoryLink({
   href,
   label,
   value,
-  icon: Icon
+  icon: Icon,
+  prefetch
 }: {
   href: string;
   label: string;
   value: number;
   icon: LucideIcon;
+  prefetch?: boolean;
 }) {
   return (
-    <Link href={href} className="mn-profile-directory-row">
+    <Link href={href} prefetch={prefetch} className="mn-profile-directory-row">
       <span className="mn-profile-directory-main">
         <span className="mn-profile-directory-icon">
           <Icon className="h-4 w-4" aria-hidden />

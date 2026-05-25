@@ -1,10 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import { useMemo, useRef, useState } from "react";
 import { MemoryCardTray, type LevelWordItem } from "@/components/level-word-browser";
 import { applyGuestProgressToWord } from "@/lib/guest-progress";
 import { cn } from "@/lib/utils";
+
+type WordNavigationDirection = "previous" | "next";
 
 export function WordCardPopupButton({
   slug,
@@ -15,7 +18,9 @@ export function WordCardPopupButton({
   isAuthenticated,
   defaultUserCardVisibility = "private",
   canEditOfficialCards = false,
-  canExportMemoryCardImages = false
+  canExportMemoryCardImages = false,
+  navigationSlugs,
+  stopClickPropagation = false
 }: {
   slug: string;
   children: ReactNode;
@@ -26,12 +31,24 @@ export function WordCardPopupButton({
   defaultUserCardVisibility?: "private" | "public";
   canEditOfficialCards?: boolean;
   canExportMemoryCardImages?: boolean;
+  navigationSlugs?: string[];
+  stopClickPropagation?: boolean;
 }) {
   const [openCards, setOpenCards] = useState<LevelWordItem[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const wordCache = useRef(new Map<string, LevelWordItem>());
+  const navigationSlugList = useMemo(() => {
+    if (!navigationSlugs?.length) return [];
+    const seen = new Set<string>();
+    return navigationSlugs.filter((value) => {
+      const nextSlug = value.trim();
+      if (!nextSlug || seen.has(nextSlug)) return false;
+      seen.add(nextSlug);
+      return true;
+    });
+  }, [navigationSlugs]);
 
   const openWord = (word: LevelWordItem) => {
     const nextWord = isAuthenticated ? word : applyGuestProgressToWord(word);
@@ -43,10 +60,79 @@ export function WordCardPopupButton({
     );
   };
 
+  const updateWord = (updatedWord: LevelWordItem) => {
+    const nextWord = isAuthenticated ? updatedWord : applyGuestProgressToWord(updatedWord);
+    wordCache.current.set(nextWord.slug, nextWord);
+    setOpenCards((current) =>
+      current.map((word) => (word.id === nextWord.id ? { ...word, ...nextWord } : word))
+    );
+  };
+
+  const replaceActiveWord = (currentWordId: string, word: LevelWordItem) => {
+    const nextWord = isAuthenticated ? word : applyGuestProgressToWord(word);
+    wordCache.current.set(nextWord.slug, nextWord);
+    setActiveCardId(nextWord.id);
+    setErrorMessage("");
+    setOpenCards((current) =>
+      [
+        nextWord,
+        ...current.filter((item) => item.id !== currentWordId && item.id !== nextWord.id)
+      ].slice(0, 5)
+    );
+  };
+
+  const refreshWordBySlug = async (nextSlug: string, showError = true, activate = true) => {
+    try {
+      const fetchedWord = await fetchWordCard(nextSlug);
+      if (activate) {
+        openWord(fetchedWord);
+      } else {
+        updateWord(fetchedWord);
+      }
+      return true;
+    } catch (error) {
+      if (showError) setErrorMessage(error instanceof Error ? error.message : "单词卡加载失败。");
+      return false;
+    }
+  };
+
   const openWordBySlug = async (nextSlug: string) => {
     const cachedWord = wordCache.current.get(nextSlug);
     if (cachedWord) {
       openWord(cachedWord);
+      void refreshWordBySlug(nextSlug, false, false);
+      return true;
+    }
+
+    setIsLoading(true);
+    setErrorMessage("");
+    try {
+      return await refreshWordBySlug(nextSlug);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const navigateWord = async (word: LevelWordItem, direction: WordNavigationDirection) => {
+    if (navigationSlugList.length <= 1) return false;
+
+    const currentIndex = navigationSlugList.findIndex((item) => item === word.slug);
+    const fallbackIndex = navigationSlugList.findIndex((item) => item === slug);
+    const baseIndex = currentIndex >= 0 ? currentIndex : fallbackIndex;
+    const step = direction === "next" ? 1 : -1;
+    const nextIndex =
+      baseIndex >= 0
+        ? (baseIndex + step + navigationSlugList.length) % navigationSlugList.length
+        : direction === "next"
+          ? 0
+          : navigationSlugList.length - 1;
+    const nextSlug = navigationSlugList[nextIndex];
+    if (!nextSlug || nextSlug === word.slug) return false;
+
+    const cachedWord = wordCache.current.get(nextSlug);
+    if (cachedWord) {
+      replaceActiveWord(word.id, cachedWord);
+      void refreshWordBySlug(nextSlug, false, false);
       return true;
     }
 
@@ -54,7 +140,7 @@ export function WordCardPopupButton({
     setErrorMessage("");
     try {
       const fetchedWord = await fetchWordCard(nextSlug);
-      openWord(fetchedWord);
+      replaceActiveWord(word.id, fetchedWord);
       return true;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "单词卡加载失败。");
@@ -64,18 +150,25 @@ export function WordCardPopupButton({
     }
   };
 
-  const updateWord = (updatedWord: LevelWordItem) => {
-    wordCache.current.set(updatedWord.slug, updatedWord);
-    setOpenCards((current) =>
-      current.map((word) => (word.id === updatedWord.id ? { ...word, ...updatedWord } : word))
-    );
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!stopClickPropagation) return;
+    event.stopPropagation();
+  };
+
+  const handleClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (stopClickPropagation) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    void openWordBySlug(slug);
   };
 
   return (
     <>
       <button
         type="button"
-        onClick={() => void openWordBySlug(slug)}
+        onPointerDown={handlePointerDown}
+        onClick={handleClick}
         disabled={disabled || isLoading}
         aria-label={ariaLabel}
         className={cn("appearance-none text-left disabled:pointer-events-none disabled:opacity-70", className)}
@@ -94,6 +187,13 @@ export function WordCardPopupButton({
           }
           onOpenLinkedWord={openWordBySlug}
           onWordUpdate={updateWord}
+          onNavigateWord={
+            navigationSlugList.length > 1
+              ? (word, direction) => {
+                  void navigateWord(word, direction);
+                }
+              : undefined
+          }
           isAuthenticated={isAuthenticated}
           defaultUserCardVisibility={defaultUserCardVisibility}
           canEditOfficialCards={canEditOfficialCards}

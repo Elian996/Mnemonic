@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { ChevronDown, Eye, EyeOff, Grid2X2, Inbox, List, Plus, Search, Volume2, Wrench } from "lucide-react";
 import { LevelTag, MnemonicSourceType, MnemonicStatus, Prisma, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -12,6 +13,9 @@ import { RepositoryBulkDeleteList } from "@/components/repository-bulk-delete-li
 import { RepositoryDeleteButton } from "@/components/repository-delete-button";
 import { RepositoryContaminationPanel } from "@/components/repository-contamination-panel";
 import { RepositoryLogicAuditPanel } from "@/components/repository-logic-audit-panel";
+import { RepositoryLineWrapCleanupPanel } from "@/components/repository-line-wrap-cleanup-panel";
+import { RepositoryLogicRepairReviewPanel } from "@/components/repository-logic-repair-review-panel";
+import { RepositoryMissingImagePanel } from "@/components/repository-missing-image-panel";
 import { RepositoryWorkloadPanel, type RepositoryWorkloadRecord } from "@/components/repository-workload-panel";
 import { WordCardPopupButton } from "@/components/word-card-popup-button";
 import {
@@ -23,7 +27,10 @@ import { AutoSubmitSelect } from "@/components/auto-submit-select";
 import { PublicTopBar } from "@/components/public-top-bar";
 import { vocabCategories } from "@/lib/vocab-categories";
 import { getMnemonicContaminationAudit } from "@/lib/mnemonic-contamination-audit";
+import { readMnemonicLineWrapCleanupReport } from "@/lib/mnemonic-line-wrap-cleanup-report";
+import { readMnemonicMissingImageReport } from "@/lib/mnemonic-missing-image-report";
 import { readMnemonicLogicAuditReport } from "@/lib/mnemonic-logic-audit-report";
+import { readLogicAuditRepairReviewItems } from "@/lib/logic-audit-repair-review";
 import { repairProgressWorkloadAuditAction } from "@/lib/repository-workload";
 import { bulkDeleteWordsFromRepositoryAction } from "@/lib/services/word-service";
 import {
@@ -48,6 +55,7 @@ type RepositorySearchParams = {
 const alphabet = "abcdefghijklmnopqrstuvwxyz".split("");
 const pageSize = 120;
 const missingMnemonicPreviewSize = 24;
+const routeFillEditorNotePrefix = "Codex route-fill:";
 const workloadStartUtc = new Date(Date.UTC(2026, 4, 17, 16, 0, 0));
 const halfDayMs = 12 * 60 * 60 * 1000;
 const shanghaiOffsetMs = 8 * 60 * 60 * 1000;
@@ -64,6 +72,7 @@ const workloadAuditActions = [
   "WORD_CREATE",
   "WORD_UPDATE",
   "MNEMONIC_SAVE",
+  "MNEMONIC_UPDATE",
   "MNEMONIC_ARCHIVE",
   repairProgressWorkloadAuditAction
 ];
@@ -80,7 +89,8 @@ const sortLabels: Record<string, string> = {
 const scopeLabels: Record<string, string> = {
   all: "当前(全部)",
   withMnemonic: "已有记忆方法",
-  empty: "待补全"
+  empty: "待补全",
+  routeFill: "本次补全"
 };
 
 export default async function RepositoryPage({
@@ -118,7 +128,18 @@ export default async function RepositoryPage({
       letter && !q ? { word: { startsWith: letter } } : {},
       levelFilter ? { levelTags: { has: levelFilter } } : {},
       scope === "withMnemonic" ? { mnemonicEntries: { some: { status: { not: "ARCHIVED" as const } } } } : {},
-      scope === "empty" ? { mnemonicEntries: { none: { status: { not: "ARCHIVED" as const } } } } : {}
+      scope === "empty" ? { mnemonicEntries: { none: { status: { not: "ARCHIVED" as const } } } } : {},
+      scope === "routeFill"
+        ? {
+            mnemonicEntries: {
+              some: {
+                sourceType: MnemonicSourceType.OFFICIAL,
+                status: { not: "ARCHIVED" as const },
+                editorNote: { startsWith: routeFillEditorNotePrefix }
+              }
+            }
+          }
+        : {}
     ]
   });
   const where = baseWhere(level);
@@ -132,7 +153,16 @@ export default async function RepositoryPage({
           ? { word: "desc" as const }
           : { createdAt: "desc" as const };
 
-  const [totalCount, categoryCounts, importDraftCount, codexP0RepairCount, codexP0EmptyLogs, codexP0ManualRestoreLogs, contaminationGroups, missingMnemonicGroups, logicAuditReport, workloadRecords] = await Promise.all([
+  const [
+    totalCount,
+    categoryCounts,
+    importDraftCount,
+    routeFillCount,
+    codexP0RepairCount,
+    codexP0EmptyLogs,
+    codexP0ManualRestoreLogs,
+    workloadRecords
+  ] = await Promise.all([
     prisma.word.count({ where }),
     Promise.all(
       categoryLinks.map(async (category) => [
@@ -141,6 +171,13 @@ export default async function RepositoryPage({
       ] as const)
     ),
     canUseImports ? prisma.importDraft.count({ where: { status: "DRAFT" } }) : Promise.resolve(0),
+    prisma.mnemonicEntry.count({
+      where: {
+        sourceType: MnemonicSourceType.OFFICIAL,
+        status: { not: MnemonicStatus.ARCHIVED },
+        editorNote: { startsWith: routeFillEditorNotePrefix }
+      }
+    }),
     prisma.mnemonicEntry.count({
       where: {
         sourceType: MnemonicSourceType.OFFICIAL,
@@ -156,9 +193,6 @@ export default async function RepositoryPage({
       where: { action: codexP0ManualRestoreAction },
       select: { entityId: true, metadataJson: true }
     }),
-    getMnemonicContaminationAudit(),
-    getMissingMnemonicGroups(),
-    readMnemonicLogicAuditReport(),
     getRepositoryWorkloadRecords(user?.id ?? null)
   ]);
   const codexP0ManuallyRestoredWordIds = new Set(codexP0ManualRestoreLogs.map((log) => log.entityId));
@@ -226,6 +260,14 @@ export default async function RepositoryPage({
                 </span>
               ) : null}
             </Link>
+            <Link
+              href={`${hrefFor({ q: "", sort: "az", view: "grid", reveal: "1", scope: "routeFill", letter: "", level: "", page: "1" })}#word-list`}
+              className="mn-repository-top-action"
+            >
+              <Grid2X2 className="h-4 w-4" />
+              <span>本次补全</span>
+              <span className="mn-repository-top-count">{routeFillCount.toLocaleString("zh-CN")}</span>
+            </Link>
             <Link href="/#new-word" className="mn-repository-top-action is-primary" aria-label="新建单词">
               <Plus className="h-4 w-4" />
               <span>新建</span>
@@ -241,6 +283,7 @@ export default async function RepositoryPage({
             <h1 className="mn-repository-title">单词仓库</h1>
             <p className="mn-repository-description">
               {activeCategory ? `${activeCategory.label} ` : "全部词库 "}
+              {scope !== "all" ? ` / ${scopeLabels[scope]}` : ""}
               {letter && !q ? ` / ${letter.toUpperCase()} 开头` : ""}
               {q ? ` / 搜索「${q}」` : ""}
             </p>
@@ -360,15 +403,14 @@ export default async function RepositoryPage({
       </section>
 
       <RepositoryWorkloadPanel records={workloadRecords} />
-      <RepositoryLogicAuditPanel report={logicAuditReport} />
-      <RepositoryContaminationPanel groups={contaminationGroups} />
-      <RepositoryMissingMnemonicPanel
-        groups={missingMnemonicGroups}
-        isAuthenticated={Boolean(user)}
-        defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
-        canEditOfficialCards={canEditOfficialCards}
-        canExportMemoryCardImages={canExportMemoryCardImages}
-      />
+      <Suspense fallback={<RepositoryMaintenanceFallback />}>
+        <RepositoryMaintenancePanels
+          isAuthenticated={Boolean(user)}
+          defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
+          canEditOfficialCards={canEditOfficialCards}
+          canExportMemoryCardImages={canExportMemoryCardImages}
+        />
+      </Suspense>
 
       <section id="word-list" className="mn-repository-word-section">
         {words.length === 0 ? (
@@ -462,6 +504,79 @@ export default async function RepositoryPage({
         ) : null}
       </section>
     </main>
+  );
+}
+
+async function RepositoryMaintenancePanels({
+  isAuthenticated,
+  defaultUserCardVisibility,
+  canEditOfficialCards,
+  canExportMemoryCardImages
+}: {
+  isAuthenticated: boolean;
+  defaultUserCardVisibility: "private" | "public";
+  canEditOfficialCards: boolean;
+  canExportMemoryCardImages: boolean;
+}) {
+  const [
+    contaminationGroups,
+    missingMnemonicGroups,
+    logicAuditReport,
+    logicRepairReviewItems,
+    lineWrapCleanupReport,
+    missingImageReport
+  ] = await Promise.all([
+    getMnemonicContaminationAudit(),
+    getMissingMnemonicGroups(),
+    readMnemonicLogicAuditReport(),
+    readLogicAuditRepairReviewItems(),
+    readMnemonicLineWrapCleanupReport(),
+    readMnemonicMissingImageReport()
+  ]);
+
+  return (
+    <>
+      <RepositoryLineWrapCleanupPanel
+        report={lineWrapCleanupReport}
+        isAuthenticated={isAuthenticated}
+        defaultUserCardVisibility={defaultUserCardVisibility}
+        canEditOfficialCards={canEditOfficialCards}
+        canExportMemoryCardImages={canExportMemoryCardImages}
+      />
+      <RepositoryMissingImagePanel
+        report={missingImageReport}
+        isAuthenticated={isAuthenticated}
+        defaultUserCardVisibility={defaultUserCardVisibility}
+        canEditOfficialCards={canEditOfficialCards}
+        canExportMemoryCardImages={canExportMemoryCardImages}
+      />
+      <RepositoryLogicAuditPanel report={logicAuditReport} />
+      <RepositoryLogicRepairReviewPanel
+        items={logicRepairReviewItems}
+        isAuthenticated={isAuthenticated}
+        defaultUserCardVisibility={defaultUserCardVisibility}
+        canEditOfficialCards={canEditOfficialCards}
+        canExportMemoryCardImages={canExportMemoryCardImages}
+      />
+      <RepositoryContaminationPanel groups={contaminationGroups} />
+      <RepositoryMissingMnemonicPanel
+        groups={missingMnemonicGroups}
+        isAuthenticated={isAuthenticated}
+        defaultUserCardVisibility={defaultUserCardVisibility}
+        canEditOfficialCards={canEditOfficialCards}
+        canExportMemoryCardImages={canExportMemoryCardImages}
+      />
+    </>
+  );
+}
+
+function RepositoryMaintenanceFallback() {
+  return (
+    <section className="mn-repository-panel-wrap mx-auto max-w-7xl px-5 pt-6 sm:px-8">
+      <div className="mn-repository-panel px-5 py-4 text-sm font-semibold text-[var(--mn-text-muted)] sm:px-6">
+        正在加载维护报告...
+      </div>
+    </section>
   );
 }
 

@@ -139,7 +139,8 @@ export default async function LevelPage({
               splitText: true,
               contentMarkdown: true,
               contentHtml: true,
-              plainText: true
+              plainText: true,
+              updatedAt: true
             },
             orderBy: [{ sourceType: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
           }
@@ -178,6 +179,7 @@ export default async function LevelPage({
         plainText: entry.plainText,
         sourceType: entry.sourceType,
         status: entry.status,
+        updatedAt: entry.updatedAt.toISOString(),
         canEdit:
           entry.sourceType === MnemonicSourceType.OFFICIAL
             ? canEditOfficial
@@ -228,7 +230,10 @@ export default async function LevelPage({
               {totalCount.toLocaleString("zh-CN")} 词 / 第 {currentPage} / {totalPages} 页
             </p>
           </div>
-          <WordMarkSaveButton />
+          <div className="flex items-center gap-2">
+            <UsageManualButton className="h-10 w-10" />
+            <WordMarkSaveButton />
+          </div>
         </header>
       </MobileModeOnly>
 

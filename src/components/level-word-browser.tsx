@@ -51,6 +51,7 @@ type MnemonicCardItem = {
   plainText: string;
   sourceType: "OFFICIAL" | "USER_PRIVATE" | "USER_PUBLIC";
   status: string;
+  updatedAt: string;
   canEdit: boolean;
 };
 
@@ -1157,7 +1158,13 @@ function keyboardMarkState(
   const normalizedKey = event.key.toLowerCase();
   if (normalizedKey === "v" || event.code === "KeyV") return "KNOWN";
   if (normalizedKey === "o" || event.code === "KeyO") return "FUZZY";
-  if (normalizedKey === "x" || event.code === "KeyX") return "UNKNOWN";
+  if (
+    normalizedKey === "s" ||
+    event.code === "KeyS" ||
+    normalizedKey === "x" ||
+    event.code === "KeyX"
+  )
+    return "UNKNOWN";
   return null;
 }
 
@@ -2059,8 +2066,23 @@ function MemoryCard({
 
   useEffect(() => {
     if (!isEditing) return;
-    saveMemoryCardDraft(word.id, editingMnemonicId, draftContent, relatedWords, draftVisibility);
-  }, [draftContent, draftVisibility, editingMnemonicId, isEditing, relatedWords, word.id]);
+    saveMemoryCardDraft(
+      word.id,
+      editingMnemonicId,
+      draftContent,
+      relatedWords,
+      draftVisibility,
+      editingCard?.updatedAt ?? ""
+    );
+  }, [
+    draftContent,
+    draftVisibility,
+    editingCard?.updatedAt,
+    editingMnemonicId,
+    isEditing,
+    relatedWords,
+    word.id
+  ]);
 
   useEffect(() => {
     if (!isEditingAny) return;
@@ -2159,7 +2181,7 @@ function MemoryCard({
       return;
     }
 
-    const savedDraft = readMemoryCardDraft(word.id, entryId);
+    const savedDraft = usableMemoryCardDraft(word.id, entryId, card);
     setActiveMnemonicId(card.id);
     setEditingMnemonicId(card.id);
     setDraftVisibility(
@@ -3362,6 +3384,7 @@ type MemoryCardLocalDraft = {
   relatedWords: string;
   visibility: "private" | "public";
   savedAt: number;
+  entryUpdatedAt: string;
 };
 
 function readMemoryCardDraft(wordId: string, entryId: string | null): MemoryCardLocalDraft | null {
@@ -3376,11 +3399,34 @@ function readMemoryCardDraft(wordId: string, entryId: string | null): MemoryCard
       content: parsed.content,
       relatedWords: typeof parsed.relatedWords === "string" ? parsed.relatedWords : "",
       visibility: parsed.visibility === "public" ? "public" : "private",
-      savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : 0
+      savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : 0,
+      entryUpdatedAt: typeof parsed.entryUpdatedAt === "string" ? parsed.entryUpdatedAt : ""
     };
   } catch {
     return null;
   }
+}
+
+function usableMemoryCardDraft(
+  wordId: string,
+  entryId: string,
+  card: Pick<MnemonicCardItem, "updatedAt">
+) {
+  const draft = readMemoryCardDraft(wordId, entryId);
+  if (!draft) return null;
+  if (isMemoryCardDraftCurrent(draft, card.updatedAt)) return draft;
+
+  clearMemoryCardDraft(wordId, entryId);
+  return null;
+}
+
+function isMemoryCardDraftCurrent(draft: MemoryCardLocalDraft, entryUpdatedAt: string) {
+  if (!entryUpdatedAt) return true;
+  if (draft.entryUpdatedAt && draft.entryUpdatedAt === entryUpdatedAt) return true;
+
+  const entryUpdatedTime = Date.parse(entryUpdatedAt);
+  if (!Number.isFinite(entryUpdatedTime)) return true;
+  return draft.savedAt >= entryUpdatedTime;
 }
 
 function saveMemoryCardDraft(
@@ -3388,7 +3434,8 @@ function saveMemoryCardDraft(
   entryId: string | null,
   content: string,
   relatedWords: string,
-  visibility: "private" | "public"
+  visibility: "private" | "public",
+  entryUpdatedAt = ""
 ) {
   if (typeof window === "undefined" || !wordId) return;
 
@@ -3398,6 +3445,7 @@ function saveMemoryCardDraft(
       content,
       relatedWords,
       visibility,
+      entryUpdatedAt,
       savedAt: Date.now()
     })
   );

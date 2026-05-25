@@ -8,7 +8,18 @@ export const loginSchema = z.object({
 
 export const registerSchema = loginSchema.extend({
   username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/),
-  displayName: z.string().min(2).max(40)
+  displayName: z.string().min(2).max(40),
+  verificationCode: z.string().regex(/^\d{6}$/)
+});
+
+export const emailVerificationRequestSchema = z.object({
+  email: z.string().email()
+});
+
+export const passwordResetSchema = z.object({
+  email: z.string().email(),
+  verificationCode: z.string().regex(/^\d{6}$/),
+  password: z.string().min(8)
 });
 
 export const wordSchema = z.object({

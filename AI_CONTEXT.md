@@ -93,6 +93,8 @@ Current mobile vocabulary direction:
 - Desktop `/levels/[level]` was also redesigned to match the quiet home style: top bar, compact hero, restrained controls, simple word cards/list, no old oversized red rule or decorative illustration. `/levels/random` should reuse this surface and load all words without a level-tag filter. Route transitions from home to level pages must not flash white in dark mode; keep global `--mn-bg` dark-aware and provide restrained loading states when needed.
 - Desktop personal center pages were redesigned on 2026-05-23 to match the quiet home/level style. `/me` should stay as a sparse profile page with a low-noise identity header, one three-part learning status strip (`熟练` / `模糊` / `生词本`), and a thin-line personal directory for `我的记忆卡`, `收件箱`, reviewer/admin entries, and repository access when permitted. Do not restore the old red-rule `InteriorHero`, cubist/dot decoration, SaaS-like module cards, hover shadow card stacks, marketing copy, or busy dashboard layout. Related pages under `/me` should share the same warm off-white/dark-mode profile surface, restrained subhero, row/list treatments, and the existing word-card popup behavior.
 - As of 2026-05-23, `/repository` ("单词仓库") should follow the same quiet sparse study-tool direction: first screen should show only the repository title, essential count/page state, search, compact sort/scope/view controls, and a click-to-expand filter drawer for category/letter filtering. Avoid large hero blocks, heavy white cards, oversized rounded modules, stacked maintenance panels, and noisy explanatory UI. Repository UI/UX refreshes must not alter word/card/import/audit data models or content, and the `RepositoryWorkloadPanel` visual/logic should remain unchanged unless the user explicitly asks to change the work log itself.
+- As of 2026-05-23, the one-time "旧词记新词" auto-filled batch is grouped inside `/repository` through `scope=routeFill` and the top-bar `本次补全` entry. These cards are identified by official `MnemonicEntry.editorNote` starting with `Codex route-fill:`; keep the batch inspectable as a package without mixing it into P0 source-repair review.
+- As of 2026-05-25, future missing-card route-fill tasks ("旧词记新词", "缺卡补全", "route-fill", user-provided pairs like "quarrel记住quarrelsome", "biochemistry记住biochemist", "current记住concurrent", "military记住militant", "portray/portrait记住portrayal", "actual记住actuality", "attend记住attendance", "courage记住courageous", "modern记住modernize", or "leader记住leadership", or similar high-confidence derivation/prefix/suffix/spelling/embedded-familiar-word/shared-root-stem/reverse-word-family/shape/meaning-extension cleanup) must use the Codex skill at `/Users/mr.mao/.codex/skills/mnemonic-route-fill/SKILL.md`. That workflow is local-only, backup-first, dry-run-first, fills only `confidence >= 0.85`, puts all other missing cards into review, does not include example sentences inside mnemonic content, and marks generated official entries with `Codex route-fill:`. Explicit user-provided routes should be treated as direct candidates: if the target is missing a card, the base exists, and the relationship is natural (for example `quarrel -> quarrelsome` via `-some`, `biochemistry -> biochemist` via the `-istry/-ist` word family, `current -> concurrent` via `con-` + `current`, `military -> militant` via the shared `mili-/milit-` military/war stem, `portray -> portrayal` via verb + noun-forming `-al`, `actual -> actuality` via `-ity`, `attend -> attendance` via `-ance`, `courage -> courageous` via `-ous`, `modern -> modernize` via `-ize`, or `leader -> leadership` via `-ship`), add the card; if the target already has a normal card, do not overwrite it and report that it already exists. Do not limit automatic scanning to cases where the target is longer than the base or is only a plain prefix/suffix addition; also search familiar longer base words, embedded familiar words, shared root/stem families, verb-to-noun `-al`, `-ity/-cy`, `-ance/-ence`, `-ous/-ic`, `-ize/-en`, `-ship/-hood`, `-ant/-ent` transformations, and light spelling transformations, but only when the meaning route is obvious and not a forced story. Same-family helper words such as `portrait` for `portrayal` may be added to the final `相关单词` block when they strengthen memory, but do not present helper words as direct etymology or force a route. False-friend-looking pairs such as `ponderous <- ponder`, `heraldic <- herald`, or `stringent <- string` must stay in review unless a clearer base route is found.
 - On internal word browsing/recitation pages, the space bar is a word-card toggle shortcut: when no word card is open it opens the selected word (or the first visible word if none is selected); when a card is open it closes the active card. Do not hijack space while the user is typing or focused on buttons/links/inputs.
 - On mobile level pages (`/levels/...`), the word browser should be list-first/list-only, with the traditional grid/list switching UI hidden.
 - Mobile level word pages should expose global search inside the current level page, using the same `/api/word-search` backend logic. Mobile search must not route to `/search?q=...`; it displays results in the current page, and tapping a result opens that word in the existing word-card popup.
@@ -167,8 +169,11 @@ Extracted text caches currently used by scripts:
 ```
 
 - If the card uses word A to remember word B, word B's card should include A in `相关单词`.
+- Words listed only under `词汇扩充` are vocabulary expansion/display text, not memory anchors, and must not be promoted into `相关单词` wiki links. Add a `[[word:...]]` related-word link only when the current target word is explicitly remembered through that linked base word in the card's memory route.
+- The related-word memory graph must not create dependency ping-pong. If A's card uses B as the memory base, B's card must not use A as its own memory base. For AI-generated or repaired cards that create A↔B or longer related-link cycles, preserve the direction from derived/less familiar target word to base/more familiar word; remove accidental reverse links or archive the bad reverse-generated card when the card body itself depends on the wrong direction.
 - Do not create related links for OCR ghosts, malformed fragments, or words not actually used as memory anchors.
 - Do not invent source content. If uncertain, preserve less and report.
+- Missing mnemonic-card images should be generated from the card's concrete mnemonic scene, not from the dictionary meaning alone. The image prompt must preserve the card's objects, action, spatial relationship, arrows/circles, and "as shown" cues as tightly as possible, while avoiding unrelated decoration, readable text, logos, and UI screenshots. The user's preferred style is realistic, emotionally exaggerated, and low-text: use cinematic/real-world scenes with strong facial expressions, body language, scale, contrast, and drama when it helps memory, while keeping readable text to a minimum or none.
 
 ### Formatting Rules For Cards
 
@@ -299,6 +304,96 @@ Spot-checks alone are not enough. Screenshots caught severe issues after earlier
 - Vitest
 - Playwright
 - Local dev server script: `npm run dev` uses port `3001`
+
+## Local Development Startup And Browser Opening
+
+When the user asks to open the local website (`本地`, `打开网站`, `打开本地网站`), do not run `next dev` directly. Always use the project startup wrapper:
+
+```bash
+npm run dev
+```
+
+Current behavior:
+
+- `npm run dev` runs `node scripts/dev-open.mjs --no-open`.
+- `npm run dev:open` runs the same wrapper and also opens the OS default browser.
+- The local app URL is `http://localhost:3001/`.
+- In Codex, prefer `npm run dev` and then open/show `http://localhost:3001/` in the in-app browser.
+
+Why this matters: the level pages depend on local PostgreSQL. If an agent starts only Next.js while Postgres is stopped, `/levels/cet6` and similar pages render "本地数据库未连接" / "暂时无法读取词库". That is a startup failure, not a level-page UI bug.
+
+The startup wrapper handles the required database setup before launching Next:
+
+- reads `DATABASE_URL` from the environment, `.env.local`, or `.env`;
+- checks whether the local database target is reachable;
+- if local Postgres is not reachable and Docker is stopped on macOS, opens `/Applications/Docker.app` and waits for Docker;
+- runs `docker compose up -d postgres`;
+- waits for the `mnemonic-postgres` container to accept connections;
+- runs `prisma generate`;
+- runs `prisma migrate deploy`;
+- seeds only when the `Word` table is empty, so existing local data is not duplicated.
+
+Correct verification after opening:
+
+```bash
+docker compose ps
+```
+
+The `mnemonic-postgres` container should be `healthy`, and `http://localhost:3001/levels/cet6` should show the word list/count instead of "本地数据库未连接". In the current local database, a healthy full dataset has roughly 41k words.
+
+If an agent intentionally needs to skip database startup, it may use `node scripts/dev-open.mjs --skip-db`, but it must expect database-backed pages to show unavailable states. Do not use `--skip-db` when the user simply wants the website opened.
+
+## Logic-Audit Card Repair Workflow
+
+The user requested a durable workflow for repairing the remaining words in the repository logic-audit summary. The scope is the "剩余" words in the 单词仓库 logic audit panel: words present in `tmp/mnemonic-logic-audit/latest.json` issues and not currently listed in `fixedWordIds`.
+
+Hard workflow requirements from the user:
+
+- Read the card before changing it. Do not modify from the issue title alone.
+- Repair one word/card at a time, with manual judgment for that card.
+- Do not invent broad rules and then apply them in bulk.
+- Do not do blanket regex rewrite of card bodies as a substitute for reading.
+- Preserve card quality and compare against already-passed cards when format is uncertain.
+- Detect and repair logic errors, OCR errors, simplified/traditional Chinese mix-ups, and format errors, but do not limit review only to those categories.
+- After all repairs are done, summarize the changes made.
+
+Helper workflow script:
+
+```bash
+npm run logic-audit:repair -- status
+npm run logic-audit:repair -- next --limit=8 --out=tmp/logic-audit-card-repair/next.json
+npm run logic-audit:repair -- apply --input=tmp/logic-audit-card-repair/repair-plan.json
+```
+
+The helper script is intentionally not a bulk fixer:
+
+- `status` reports current remaining/fixed counts.
+- `next` exports the next highest-priority remaining words with full issue evidence, current card markdown, dictionary fields, examples, related-word block, attention hints for traditional/OCR artifacts, and a `beforeHash`.
+- The AI/human must then read each exported word one by one and write explicit per-word repair decisions into an apply JSON.
+- `apply` verifies `beforeHash`, backs up every touched entry under `tmp/logic-audit-card-repair/backups/`, writes `MnemonicEntryVersion`, regenerates `contentHtml`/`plainText`, syncs wiki links, records `AuditLog`, and marks the word fixed only for explicit `repaired` or `confirmed_ok` decisions.
+- If the current card is already clean and the old issue is stale, use `confirmed_ok` with a reason rather than making cosmetic edits.
+- If the word cannot be repaired confidently, use `skipped`; do not mark fixed.
+
+Current local status when the workflow was created on 2026-05-25:
+
+- raw logic-audit issue rows: 2112
+- unique issue words: 1853
+- fixed issue words: 616
+- remaining issue words: 1237
+- next priority starts with P1 words such as `invalid`, `irony`, and `irrespective`.
+
+Automation notes from 2026-05-25:
+
+- The cron automation named `Logic audit card repair` was deleted because it opened many separate Codex task windows and used English prompts.
+- Replacement follow-up: current-thread heartbeat named `单词卡逻辑修复跟进`.
+- Cadence: every 1 minute in the current thread.
+- It may check every minute, but it must not start overlapping work. A new batch may begin only after the previous batch has finished and reported results in the current thread.
+- It must use Chinese, stay in the same conversation, and process only small batches with per-word reading/judgment.
+- Efficiency update from 2026-05-25: for this current-thread repair workflow, default to about 12 words per completed round; if the exported words are low-risk split/derivation/OCR fixes, it is acceptable to handle up to 16 in one round. This is only a batching/verification efficiency change: each word still requires full card/evidence/dictionary/example/related-word reading, and no broad rule-based body rewrite is allowed.
+- Efficiency is allowed in mechanical checks: combine JSON validation, split sanity checks, related-word existence lookup, status checks, and representative `/api/word-card/:slug` reads into fixed commands/scripts. Do not automate the actual prose repair decision.
+- Each batch must output changed words, confirmed-ok words, skipped words, backup/run report paths, and remaining count.
+- User feedback on 2026-05-25: do not create automation behavior that opens many separate Codex windows/tasks when the user expects work to continue in the same conversation. Do not write automation prompts/output in English for this Chinese project workflow; use Chinese unless the user asks otherwise.
+- For logic-audit card repair, prefer continuing in the current thread or using a manually triggered single run. Do not re-enable a cron automation unless the user explicitly asks for separate background task windows.
 
 ## Production Server Access
 
@@ -782,6 +877,7 @@ Current Codex P0 repair review UI:
 Repository logic audit panel interaction:
 
 - The logic-audit problem area on `/repository` should not show dense issue cards by default. Each problem word should render as a compact English-only module.
+- The `123 逻辑修复复查` area on `/repository` must stay visually simple: show repaired words as compact word modules in a grid, and show the selected word's change summary in a small side pane. Do not render each repaired word as a large expanded row with multiple visible cards/sections by default; the user explicitly found that view annoying.
 - Clicking an English module opens the shared `MemoryCardTray` word-card popup for that word.
 - While a logic-audit word card is open, `← / →` should switch to the previous/next problem word card in the current filtered problem-word list.
 - Closing the popup should leave the corresponding English module selected with the blue outline and scroll it into view, matching the outside word-card follow behavior.

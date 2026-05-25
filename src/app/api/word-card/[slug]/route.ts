@@ -634,7 +634,8 @@ async function findWordCardRecord(slug: string, userId: string | null) {
           splitText: true,
           contentMarkdown: true,
           contentHtml: true,
-          plainText: true
+          plainText: true,
+          updatedAt: true
         },
         orderBy: [{ sourceType: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
       }
@@ -665,6 +666,7 @@ async function toWordCardPayload(word: WordCardRecord, user: Pick<User, "id" | "
       plainText: entry.plainText,
       sourceType: entry.sourceType,
       status: entry.status,
+      updatedAt: entry.updatedAt.toISOString(),
       canEdit: canEditMnemonic(user, entry)
     }))
   );

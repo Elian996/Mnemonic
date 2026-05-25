@@ -54,6 +54,10 @@ type RepairHistoryItem = {
   previousFixed: boolean;
   nextFixed: boolean;
 };
+type RepairProgressDraft = {
+  fixedWordIds: Set<string>;
+  isSnapshot: boolean;
+};
 type SeverityFilter = MnemonicLogicIssueSeverity | "all";
 type IssueNavigationDirection = "previous" | "next";
 
@@ -183,10 +187,10 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
   }, [activeCardId, selectedWordId, visibleCount]);
 
   useEffect(() => {
-    const nextFixedWordIds = new Set([
-      ...reportFixedWordIds,
-      ...readRepairProgress(repairStorageKey, allProblemWordIds)
-    ]);
+    const localProgress = readRepairProgress(repairStorageKey, allProblemWordIds);
+    const nextFixedWordIds = localProgress.isSnapshot
+      ? localProgress.fixedWordIds
+      : new Set([...reportFixedWordIds, ...localProgress.fixedWordIds]);
     const savedSignature = repairProgressSignature(reportFixedWordIds);
     const nextSignature = repairProgressSignature(nextFixedWordIds);
 
@@ -199,6 +203,7 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
     setRepairSaveMessage(
       nextSignature === savedSignature ? "已保存" : "检测到本地未保存标记，3 秒后自动保存"
     );
+    if (nextSignature === savedSignature) clearStoredRepairProgress(repairStorageKey);
   }, [allProblemWordIds, repairStorageKey, reportFixedWordIds]);
 
   const persistRepairProgress = useCallback(
@@ -237,15 +242,14 @@ export function RepositoryLogicAuditPanel({ report }: { report: MnemonicLogicAud
         if (repairProgressSignature(fixedWordIdsRef.current) === requestedSignature) {
           fixedWordIdsRef.current = persistedFixedWordIds;
           setFixedWordIds(persistedFixedWordIds);
-          writeRepairProgress(repairStorageKey, persistedFixedWordIds);
-        } else {
-          writeRepairProgress(repairStorageKey, fixedWordIdsRef.current);
         }
 
         if (repairProgressSignature(fixedWordIdsRef.current) === persistedSignature) {
+          clearStoredRepairProgress(repairStorageKey);
           setRepairSaveState("saved");
           setRepairSaveMessage(`已保存 ${formatClockTime()}`);
         } else {
+          writeRepairProgress(repairStorageKey, fixedWordIdsRef.current);
           setRepairSaveState("dirty");
           setRepairSaveMessage("有新的未保存标记，3 秒后自动保存");
         }
@@ -1062,51 +1066,75 @@ function IssueWordTile({
   onSelect: () => void;
   onToggleFixed: () => void;
 }) {
+  const fixedActionLabel = isFixed ? "撤回已修" : "标记已修";
+
   return (
-    <button
-      type="button"
-      data-repository-issue-word-id={issue.wordId}
-      onClick={onOpenWord}
-      onFocus={onSelect}
-      onKeyDown={(event) => {
-        if (event.defaultPrevented) return;
-        if (event.key === "Enter") {
-          event.preventDefault();
-          onOpenWord();
-          return;
-        }
-        if (event.key === " " || event.code === "Space") {
-          event.preventDefault();
-          event.stopPropagation();
-          onOpenWord();
-          return;
-        }
-        if (event.key.toLowerCase() === "v" || event.code === "KeyV") {
-          event.preventDefault();
-          event.stopPropagation();
-          onToggleFixed();
-        }
-      }}
-      title={issue.word}
-      aria-pressed={isFixed}
-      aria-label={`${issue.word}，${isFixed ? "已标记" : "未标记"}，点击或空格打开单词卡，V 标记`}
+    <div
       className={cn(
-        "group flex h-14 min-w-0 items-center justify-between gap-2 rounded-lg border bg-white px-3 text-left text-base font-semibold tracking-normal text-foreground transition hover:-translate-y-0.5 hover:border-[#1d1d1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:bg-background dark:hover:border-foreground",
+        "group grid h-14 min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center gap-2 rounded-lg border bg-white px-3 text-base font-semibold tracking-normal text-foreground transition hover:-translate-y-0.5 hover:border-[#1d1d1f] hover:shadow-sm dark:bg-background dark:hover:border-foreground",
         isSelected && "border-[#1a73e8] ring-2 ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]",
         isFixed
           ? "border-emerald-200 bg-emerald-50/70 text-emerald-950 dark:border-emerald-400/30 dark:bg-emerald-500/10 dark:text-emerald-100"
           : "border-border/70"
       )}
     >
-      <span className="min-w-0 truncate">{issue.word}</span>
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
+      <button
+        type="button"
+        data-repository-issue-word-id={issue.wordId}
+        onClick={onOpenWord}
+        onFocus={onSelect}
+        onKeyDown={(event) => {
+          if (event.defaultPrevented) return;
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onOpenWord();
+            return;
+          }
+          if (event.key === " " || event.code === "Space") {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpenWord();
+            return;
+          }
+          if (event.key.toLowerCase() === "v" || event.code === "KeyV") {
+            event.preventDefault();
+            event.stopPropagation();
+            onToggleFixed();
+          }
+        }}
+        title={issue.word}
+        aria-label={`${issue.word}，点击或空格打开单词卡，V ${fixedActionLabel}`}
+        className="min-w-0 truncate text-left focus:outline-none"
+      >
+        {issue.word}
+      </button>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+          onToggleFixed();
+        }}
+        onFocus={onSelect}
+        title={`${issue.word}：${fixedActionLabel}`}
+        aria-label={`${issue.word}：${fixedActionLabel}`}
+        aria-pressed={isFixed}
+        className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1a73e8]",
+          isFixed
+            ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-400/15 dark:text-emerald-100 dark:hover:bg-emerald-400/25"
+            : "hover:bg-muted hover:text-foreground"
+        )}
+      >
         {isLoading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : isFixed ? (
-          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-200" />
-        ) : null}
-      </span>
-    </button>
+          <Undo2 className="h-4 w-4" />
+        ) : (
+          <CheckCircle2 className="h-4 w-4" />
+        )}
+      </button>
+    </div>
   );
 }
 
@@ -1260,30 +1288,59 @@ function repairProgressSignature(wordIds: Set<string>) {
   return [...wordIds].sort().join("\n");
 }
 
-function readRepairProgress(storageKey: string, validWordIds: Set<string>) {
-  if (typeof window === "undefined") return new Set<string>();
+function readRepairProgress(storageKey: string, validWordIds: Set<string>): RepairProgressDraft {
+  const emptyProgress = { fixedWordIds: new Set<string>(), isSnapshot: false };
+  if (typeof window === "undefined") return emptyProgress;
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(storageKey) || "[]") as unknown;
-    if (!Array.isArray(parsed)) return new Set<string>();
-    return new Set(
-      parsed.filter(
-        (wordId): wordId is string => typeof wordId === "string" && validWordIds.has(wordId)
-      )
-    );
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return emptyProgress;
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return {
+        fixedWordIds: filterRepairProgressWordIds(parsed, validWordIds),
+        isSnapshot: false
+      };
+    }
+    if (!parsed || typeof parsed !== "object") return emptyProgress;
+
+    const fixedWordIds = (parsed as { fixedWordIds?: unknown }).fixedWordIds;
+    if (!Array.isArray(fixedWordIds)) return emptyProgress;
+
+    return {
+      fixedWordIds: filterRepairProgressWordIds(fixedWordIds, validWordIds),
+      isSnapshot: true
+    };
   } catch {
-    return new Set<string>();
+    return emptyProgress;
   }
 }
 
 function writeRepairProgress(storageKey: string, fixedWordIds: Set<string>) {
   if (typeof window === "undefined") return;
 
-  if (!fixedWordIds.size) {
-    window.localStorage.removeItem(storageKey);
-    return;
-  }
-  window.localStorage.setItem(storageKey, JSON.stringify([...fixedWordIds]));
+  window.localStorage.setItem(
+    storageKey,
+    JSON.stringify({
+      version: 2,
+      fixedWordIds: [...fixedWordIds].sort(),
+      updatedAt: new Date().toISOString()
+    })
+  );
+}
+
+function clearStoredRepairProgress(storageKey: string) {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(storageKey);
+}
+
+function filterRepairProgressWordIds(wordIds: unknown[], validWordIds: Set<string>) {
+  return new Set(
+    wordIds.filter(
+      (wordId): wordId is string => typeof wordId === "string" && validWordIds.has(wordId)
+    )
+  );
 }
 
 function isTextInputTarget(target: EventTarget | null) {

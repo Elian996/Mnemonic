@@ -97,30 +97,41 @@ export function MyMnemonicsManager({
     setOpenCards((current) => [word, ...current.filter((item) => item.id !== word.id)].slice(0, 5));
   };
 
+  const updateWord = (updatedWord: LevelWordItem) => {
+    wordCache.current.set(updatedWord.slug, updatedWord);
+    setOpenCards((current) => current.map((word) => (word.id === updatedWord.id ? { ...word, ...updatedWord } : word)));
+  };
+
+  const refreshWordBySlug = async (slug: string, showError = true, activate = true) => {
+    try {
+      const fetchedWord = await fetchWordCard(slug);
+      if (activate) {
+        openWord(fetchedWord);
+      } else {
+        updateWord(fetchedWord);
+      }
+      return true;
+    } catch (error) {
+      if (showError) setMessage(error instanceof Error ? error.message : "单词卡加载失败。");
+      return false;
+    }
+  };
+
   const openWordBySlug = async (slug: string) => {
     const cachedWord = wordCache.current.get(slug);
     if (cachedWord) {
       openWord(cachedWord);
+      void refreshWordBySlug(slug, false, false);
       return true;
     }
 
     setLoadingSlug(slug);
     setMessage("");
     try {
-      const fetchedWord = await fetchWordCard(slug);
-      openWord(fetchedWord);
-      return true;
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "单词卡加载失败。");
-      return false;
+      return await refreshWordBySlug(slug);
     } finally {
       setLoadingSlug((current) => (current === slug ? null : current));
     }
-  };
-
-  const updateWord = (updatedWord: LevelWordItem) => {
-    wordCache.current.set(updatedWord.slug, updatedWord);
-    setOpenCards((current) => current.map((word) => (word.id === updatedWord.id ? { ...word, ...updatedWord } : word)));
   };
 
   return (

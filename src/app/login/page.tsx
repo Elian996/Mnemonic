@@ -65,6 +65,9 @@ export default async function LoginPage({
                 className="h-11 rounded-md border px-3 text-sm font-normal outline-none transition focus:border-[var(--mn-ink)]"
               />
             </label>
+            <Link href="/forgot-password" className="text-sm font-semibold text-[var(--mn-muted)] transition hover:text-[var(--mn-ink)]">
+              忘记密码？
+            </Link>
             {errorMessage ? <p className="text-sm font-medium text-[var(--mn-red)]">{errorMessage}</p> : null}
             <button type="submit" className="h-11 rounded-md bg-[var(--mn-ink)] px-4 text-sm font-semibold text-[var(--mn-panel)] transition hover:opacity-90">
               登录

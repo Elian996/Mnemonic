@@ -116,11 +116,25 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
     if (cachedWord) {
       setSelectedWord(cachedWord);
       setIsResultsOpen(false);
+      void refreshWordCardBySlug(slug);
       return;
     }
 
     setLoadingSlug(slug);
     setMessage("");
+    try {
+      await refreshWordCardBySlug(slug, true);
+      setIsResultsOpen(false);
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "无法打开单词卡");
+      setIsResultsOpen(true);
+    } finally {
+      setLoadingSlug((current) => (current === slug ? null : current));
+    }
+  };
+
+  const refreshWordCardBySlug = async (slug: string, raiseError = false) => {
     try {
       const response = await fetch(`/api/word-card/${encodeURIComponent(slug)}?fresh=${Date.now()}`, {
         cache: "no-store"
@@ -129,13 +143,8 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
       const card = (await response.json()) as LevelWordItem;
       wordCacheRef.current.set(card.slug, card);
       setSelectedWord(card);
-      setIsResultsOpen(false);
     } catch (error) {
-      setStatus("error");
-      setMessage(error instanceof Error ? error.message : "无法打开单词卡");
-      setIsResultsOpen(true);
-    } finally {
-      setLoadingSlug((current) => (current === slug ? null : current));
+      if (raiseError) throw error;
     }
   };
 

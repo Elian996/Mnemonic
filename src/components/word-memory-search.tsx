@@ -76,6 +76,25 @@ export function WordMemorySearch({
     setOpenCards((current) => [nextWord, ...current.filter((item) => item.id !== nextWord.id)].slice(0, 5));
   };
 
+  const updateWord = (updatedWord: LevelWordItem) => {
+    const nextWord = isAuthenticated ? updatedWord : applyGuestProgressToWord(updatedWord);
+    linkedWordCache.current.set(nextWord.slug, nextWord);
+    setOpenCards((current) => current.map((word) => (word.id === nextWord.id ? { ...word, ...nextWord } : word)));
+  };
+
+  const refreshWordBySlug = async (slug: string, activate = true) => {
+    const response = await fetch(`/api/word-card/${encodeURIComponent(slug)}?fresh=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) return false;
+    const fetchedWord = (await response.json()) as LevelWordItem;
+    if (activate) {
+      openWord(fetchedWord);
+    } else {
+      updateWord(fetchedWord);
+    }
+    setIsResultsOpen(false);
+    return true;
+  };
+
   const searchWord = async () => {
     const query = q.trim();
     if (!query || isLoading) return;
@@ -104,28 +123,19 @@ export function WordMemorySearch({
     const cachedWord = linkedWordCache.current.get(slug);
     if (cachedWord) {
       openWord(cachedWord);
+      void refreshWordBySlug(slug, false);
       return true;
     }
 
     setLoadingSlug(slug);
     try {
-      const response = await fetch(`/api/word-card/${encodeURIComponent(slug)}?fresh=${Date.now()}`, { cache: "no-store" });
-      if (!response.ok) return false;
-      const fetchedWord = (await response.json()) as LevelWordItem;
-      openWord(fetchedWord);
-      setIsResultsOpen(false);
-      return true;
+      return await refreshWordBySlug(slug);
     } finally {
       setLoadingSlug((current) => (current === slug ? null : current));
     }
   };
 
   const openLinkedWord = async (slug: string) => openWordBySlug(slug);
-
-  const updateWord = (updatedWord: LevelWordItem) => {
-    linkedWordCache.current.set(updatedWord.slug, updatedWord);
-    setOpenCards((current) => current.map((word) => (word.id === updatedWord.id ? { ...word, ...updatedWord } : word)));
-  };
 
   const closeSearch = () => {
     setIsResultsOpen(false);

@@ -287,7 +287,6 @@ function extractContextualCandidates(markdown: string) {
     /(?:记忆单词|熟悉单词|熟悉的单词|记忆过的单词)\s*([a-z][a-z-]{1,38})/giu,
     /联想到(?:一个)?(?:已经记忆过的|记忆过的|熟悉的|以及记忆过的)?(?:熟悉)?单词\s*([a-z][a-z-]{1,38})/giu,
     /\b([a-z][a-z-]{1,38})\b\s*(?:n|v|vt|vi|w|adj|adv|pron|prep|conj)\.?(?=[\u4e00-\u9fff])/giu,
-    /词汇扩充[:：]\s*([a-z][a-z-]{1,38})/giu,
     /常见搭配[:：]\s*([a-z][a-z-]{1,38})/giu
   ];
 
@@ -304,14 +303,21 @@ function extractContextualCandidates(markdown: string) {
 
 function candidateSourceText(markdown: string) {
   const [beforeExplicitExample] = markdown.split(/\n例句[:：]/u);
-  let source = beforeExplicitExample ?? markdown;
+  let source = stripVocabExpansionSections(beforeExplicitExample ?? markdown);
   const inlineExampleIndex = source.search(
     /(?:^|[\s;；。])(?:[0-9]{2,4}\s*)?(?:B[fJ&5]*|BJ[&5J]*|M\|5|ĐJT|够句|例句|[*/]?[A-Za-z0-9]{1,5}\]|[向狗够]\s*)[:：]\s*(?=[A-Z])/u
   );
   if (inlineExampleIndex > 40) source = source.slice(0, inlineExampleIndex).trim();
 
-  const explicitRelatedSections = Array.from(markdown.matchAll(/(?:词汇扩充|常见搭配)[:：][^\n。]+/gu)).map((match) => match[0]);
+  const explicitRelatedSections = Array.from(markdown.matchAll(/常见搭配[:：][^\n。]+/gu)).map((match) => match[0]);
   return [source, ...explicitRelatedSections].filter(Boolean).join("\n");
+}
+
+function stripVocabExpansionSections(markdown: string) {
+  return markdown.replace(
+    /\n*(?:词汇扩充|问汇扩充)[:：][\s\S]*?(?=\n(?:相关单词|例句|常见搭配|对比辨析|词根词缀积累|巧记|图片|释义|划分|记忆卡|注意|总结)[:：]|\n{2,}|$)/gu,
+    ""
+  );
 }
 
 function cleanCandidate(candidate: string) {

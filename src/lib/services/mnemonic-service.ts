@@ -759,6 +759,19 @@ async function upsertMnemonicEntry(input: {
       });
       await ensureWordNode(input.wordId, tx);
       await syncEntryWikiLinks(entry.id, input.actorId, tx);
+      await tx.auditLog.create({
+        data: {
+          actorId: input.actorId,
+          action: "MNEMONIC_UPDATE",
+          entityType: "MnemonicEntry",
+          entityId: entry.id,
+          metadataJson: {
+            wordId: input.wordId,
+            previous: { sourceType: existing.sourceType, status: existing.status },
+            next: { sourceType: input.sourceType, status: input.status }
+          }
+        }
+      });
       return entry;
     }
 

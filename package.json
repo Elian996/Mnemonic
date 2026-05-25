@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --port 3001",
+    "dev": "node scripts/dev-open.mjs --no-open",
     "dev:open": "node scripts/dev-open.mjs",
     "build": "prisma generate && next build",
     "start": "next start",
@@ -30,6 +30,9 @@
     "vocab:apply": "tsx scripts/apply-vocab-tags.ts",
     "mnemonic:audit-contamination": "tsx scripts/audit-mnemonic-contamination.ts",
     "mnemonic:audit-logic": "tsx scripts/audit-categorized-mnemonic-logic.ts",
+    "logic-audit:repair": "tsx scripts/logic-audit-repair-workflow.ts",
+    "mnemonic:audit-missing-images": "tsx scripts/audit-missing-mnemonic-images.ts",
+    "mnemonic:generate-images": "tsx scripts/generate-missing-mnemonic-images.ts",
     "vocab:cleanup-noise": "tsx scripts/cleanup-vocab-noise.ts"
   },
   "dependencies": {

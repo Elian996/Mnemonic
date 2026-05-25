@@ -422,16 +422,6 @@ async function saveConfirmedImportDraft(user: User, input: ConfirmedImportInput)
           }
         });
 
-    await tx.mnemonicEntryVersion.create({
-      data: {
-        mnemonicEntryId: entry.id,
-        contentMarkdown: entry.contentMarkdown,
-        splitText: entry.splitText,
-        title: entry.title,
-        editorId: user.id
-      }
-    });
-
     await ensureWordNode(word.id, tx);
     await syncEntryWikiLinks(entry.id, user.id, tx);
 

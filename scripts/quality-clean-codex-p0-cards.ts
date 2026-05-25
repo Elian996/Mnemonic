@@ -705,13 +705,12 @@ function extractRelatedWords(markdown: string, currentWord: string, wordSet: Set
 function extractContextualRelatedWords(body: string, currentWord: string, wordSet: Set<string>) {
   const current = currentWord.toLowerCase();
   const candidates: string[] = [];
-  const text = body.replace(/\n/g, " ");
+  const text = stripVocabExpansionSections(body).replace(/\n/g, " ");
   const patterns = [
     /\b([a-z][a-z-]{1,38})\b\s*(?:为|是)(?:前面)?(?:已经)?(?:记忆过的)?(?:熟悉的?)?单词/giu,
     /(?:记忆单词|熟悉单词|熟悉的单词|记忆过的单词)\s*([a-z][a-z-]{1,38})/giu,
     /联想到(?:一个)?(?:已经记忆过的|记忆过的|熟悉的|以及记忆过的)?(?:熟悉)?单词\s*([a-z][a-z-]{1,38})/giu,
     /\b([a-z][a-z-]{1,38})\b\s*(?:n|v|vt|vi|adj|adv|pron|prep|conj)\.?(?=[\u4e00-\u9fff])/giu,
-    /词汇扩充[:：]\s*([a-z][a-z-]{1,38})/giu,
     /常见搭配[:：]\s*([a-z][a-z-]{1,38})/giu
   ];
   for (const pattern of patterns) {
@@ -746,6 +745,13 @@ function withRelatedWordBlock(body: string, relatedWords: string[]) {
 
 function stripRelatedWordBlock(markdown: string) {
   return markdown.replace(/\n*相关单词[:：][\s\S]*$/u, "").trimEnd();
+}
+
+function stripVocabExpansionSections(markdown: string) {
+  return markdown.replace(
+    /\n*(?:词汇扩充|问汇扩充)[:：][\s\S]*?(?=\n(?:相关单词|例句|常见搭配|对比辨析|词根词缀积累|巧记|图片|释义|划分|记忆卡|注意|总结)[:：]|\n{2,}|$)/gu,
+    ""
+  );
 }
 
 function cleanPhonetic(value: string | null | undefined) {

@@ -75,13 +75,13 @@ export function RepositoryWorkloadPanel({ records }: { records: RepositoryWorklo
             </div>
           </div>
 
-          <div className="min-w-0 bg-white p-4 sm:p-5">
+          <div className="min-w-0 bg-[var(--mn-surface)] p-4 sm:p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-[#1d1d1f]">按半天归档</p>
-                <p className="mt-1 text-sm text-[#6e6e73]">每段内同一个单词只记一次</p>
+                <p className="text-sm font-semibold text-[var(--mn-text)]">按半天归档</p>
+                <p className="mt-1 text-sm text-[var(--mn-text-muted)]">每段内同一个单词只记一次</p>
               </div>
-              <div className="hidden items-center gap-2 rounded-full bg-[#f5f5f7] px-3 py-2 text-sm font-semibold text-[#515154] sm:inline-flex">
+              <div className="hidden items-center gap-2 rounded-full bg-[var(--mn-panel-strong)] px-3 py-2 text-sm font-semibold text-[var(--mn-text-muted)] sm:inline-flex">
                 {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clock3 className="h-4 w-4" />}
                 {isPending ? "同步中" : "12 小时 / 档"}
               </div>
@@ -93,18 +93,18 @@ export function RepositoryWorkloadPanel({ records }: { records: RepositoryWorklo
                   <article
                     key={record.id}
                     className={cn(
-                      "w-60 shrink-0 rounded-3xl border bg-[#fbfbfd] p-4 transition",
+                      "w-60 shrink-0 rounded-3xl border bg-[var(--mn-surface-soft)] p-4 transition",
                       record.isCurrent
                         ? "border-[#7ee0b6] shadow-[0_14px_30px_rgba(18,123,83,0.12)]"
                         : record.isStart
                           ? "border-[#ffd88a] shadow-[0_14px_30px_rgba(130,86,0,0.10)]"
-                          : "border-black/5"
+                          : "border-[var(--mn-border-soft)]"
                     )}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-[#1d1d1f]">{record.label}</p>
-                        <p className="mt-1 text-xs font-medium text-[#6e6e73]">{record.rangeLabel}</p>
+                        <p className="truncate text-sm font-semibold text-[var(--mn-text)]">{record.label}</p>
+                        <p className="mt-1 text-xs font-medium text-[var(--mn-text-muted)]">{record.rangeLabel}</p>
                       </div>
                       <span
                         className={cn(
@@ -122,12 +122,12 @@ export function RepositoryWorkloadPanel({ records }: { records: RepositoryWorklo
 
                     <div className="mt-5 flex items-end justify-between gap-3">
                       <div>
-                        <p className="text-4xl font-semibold tracking-normal text-[#111113]">{record.wordCount}</p>
-                        <p className="mt-1 text-xs font-semibold text-[#6e6e73]">个单词</p>
+                        <p className="text-4xl font-semibold tracking-normal text-[var(--mn-text)]">{record.wordCount}</p>
+                        <p className="mt-1 text-xs font-semibold text-[var(--mn-text-muted)]">个单词</p>
                       </div>
-                      <div className="rounded-2xl bg-white px-3 py-2 text-right shadow-sm ring-1 ring-black/5">
-                        <p className="text-sm font-semibold text-[#1d1d1f]">{record.eventCount}</p>
-                        <p className="text-xs text-[#86868b]">次修改</p>
+                      <div className="rounded-2xl bg-[var(--mn-surface)] px-3 py-2 text-right shadow-sm ring-1 ring-[var(--mn-border-soft)]">
+                        <p className="text-sm font-semibold text-[var(--mn-text)]">{record.eventCount}</p>
+                        <p className="text-xs text-[var(--mn-text-faint)]">次修改</p>
                       </div>
                     </div>
 
@@ -146,20 +146,20 @@ export function RepositoryWorkloadPanel({ records }: { records: RepositoryWorklo
                     {record.sampleWords.length ? (
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {record.sampleWords.slice(0, 4).map((word) => (
-                          <span key={word} className="max-w-full truncate rounded-full bg-white px-2.5 py-1 text-xs font-medium text-[#515154] ring-1 ring-black/5">
+                          <span key={word} className="max-w-full truncate rounded-full bg-[var(--mn-surface)] px-2.5 py-1 text-xs font-medium text-[var(--mn-text-muted)] ring-1 ring-[var(--mn-border-soft)]">
                             {word}
                           </span>
                         ))}
                       </div>
                     ) : (
-                      <div className="mt-3 flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-xs font-medium text-[#86868b] ring-1 ring-black/5">
+                      <div className="mt-3 flex items-center gap-2 rounded-2xl bg-[var(--mn-surface)] px-3 py-2 text-xs font-medium text-[var(--mn-text-faint)] ring-1 ring-[var(--mn-border-soft)]">
                         <PencilLine className="h-3.5 w-3.5" />
                         暂无修改
                       </div>
                     )}
 
                     {record.firstEditLabel || record.lastEditLabel ? (
-                      <p className="mt-3 text-xs font-medium text-[#86868b]">
+                      <p className="mt-3 text-xs font-medium text-[var(--mn-text-faint)]">
                         {record.firstEditLabel}
                         {record.lastEditLabel && record.lastEditLabel !== record.firstEditLabel ? ` - ${record.lastEditLabel}` : ""}
                       </p>

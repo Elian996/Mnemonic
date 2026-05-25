@@ -19,14 +19,12 @@ mnemonic 是一个面向中文学习者的英语单词助记网站。它不是 A
 ```bash
 npm install
 cp .env.example .env
-docker compose up -d
-npm run db:generate
-npm run db:migrate
-npm run db:seed
 npm run dev
 ```
 
-打开 [http://localhost:3000](http://localhost:3000)。
+`npm run dev` 会自动检查本地 PostgreSQL：如果 Docker Desktop 没有运行，会先打开 Docker Desktop，再启动 `docker compose` 里的 Postgres，执行已存在的 migration，并在空库时写入种子数据。
+
+打开 [http://localhost:3001](http://localhost:3001)。
 
 ## 环境变量
 

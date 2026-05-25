@@ -25,6 +25,7 @@ export function SiteHeader({
     pathname === "/repository/codex-p0-repair" ||
     pathname === "/login" ||
     pathname === "/register" ||
+    pathname === "/forgot-password" ||
     pathname === "/me" ||
     pathname.startsWith("/me/")
   ) {

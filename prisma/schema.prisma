@@ -20,6 +20,11 @@ enum UserStatus {
   SUSPENDED
 }
 
+enum EmailVerificationPurpose {
+  REGISTER
+  PASSWORD_RESET
+}
+
 enum LevelTag {
   LEVEL_2
   LEVEL_3
@@ -154,6 +159,21 @@ model User {
   auditLogs         AuditLog[]
   notifications     Notification[]
   mnemonicCardOrders UserMnemonicCardOrder[]
+}
+
+model EmailVerificationCode {
+  id         String                   @id @default(cuid())
+  email      String
+  purpose    EmailVerificationPurpose
+  codeHash   String
+  attempts   Int                      @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  sentIp     String?
+  createdAt  DateTime                 @default(now())
+
+  @@index([email, purpose, createdAt])
+  @@index([sentIp, createdAt])
 }
 
 model Word {

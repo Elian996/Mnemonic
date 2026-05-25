@@ -469,6 +469,85 @@ rsync -av --ignore-existing \
 ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 'sudo systemctl restart mnemonic'
 ```
 
+## Fast Local-Source Sync SOP
+
+Use this path when the user asks to synchronize "以本地为准", "最新数据和改动", "同步到 GitHub 和腾讯云", or similar. This is a full local-source sync across GitHub, local data, and the production server; it covers code, PostgreSQL data, and uploaded image files. Do not put `.env`, private keys, database passwords, dump files, `backups/`, or `public/uploads/` into Git.
+
+Fastest safe order:
+
+1. Local preflight: check `git status --short --branch`, `git fetch origin`, `npm run typecheck -- --pretty false`, and `npm run build`. If `prisma/schema.prisma` changed, make sure a matching migration exists before deployment; `npx prisma migrate status` must be clean locally.
+2. Commit and push code/reports to GitHub. Prefer CLI `git push origin main`; if HTTPS credentials fail on this Mac, use GitHub Desktop's `Push origin` button and then verify `git rev-parse --short HEAD` equals `git rev-parse --short origin/main`.
+3. In parallel after preflight, create a local source dump and a server pre-restore backup. The server backup must complete before any restore. Keep both dump paths in the final report and, if this is a notable production sync, record them in this document.
+4. Transfer the local dump to `/home/ubuntu/Mnemonic/backups/db-dumps/` and sync `public/uploads/` with `rsync -az --delete` only when local is intentionally the source of truth. Use `--ignore-existing` only for additive image migration, not for full local-source sync.
+5. On the server: stop `mnemonic.service`, `git pull --ff-only origin main`, restore the local dump over the server database with the Docker `postgres:16-alpine` client, run `npm ci --no-audit --no-fund`, `npm run db:deploy`, `NODE_OPTIONS=--max_old_space_size=1536 npm run build`, then restart the service.
+6. Verify all three layers: local/GitHub/server commit hashes match; server service is `active`; homepage returns `200 OK`; `/api/word-card/memory` returns real JSON; local and server counts match for `Word`, `MnemonicEntry`, `MemoryNode`, `MemoryLink`, `User`, and `ImportDraft`; local and server `public/uploads` file counts match.
+
+Reusable command skeleton:
+
+```bash
+# Local code verification and push
+git fetch origin
+git status --short --branch
+npm run typecheck -- --pretty false
+npm run build
+git add -A
+git commit -m "Sync latest mnemonic data and tools"
+git push origin main
+
+# If CLI push fails because HTTPS credentials are unavailable, push with GitHub Desktop, then verify:
+git fetch origin
+git rev-parse --short HEAD
+git rev-parse --short origin/main
+```
+
+```bash
+# Local source database dump
+ts=$(date +%Y%m%d-%H%M%S)
+mkdir -p backups/db-dumps
+dump="backups/db-dumps/mnemonic-local-source-${ts}.dump"
+docker exec mnemonic-postgres pg_dump -U mnemonic -d mnemonic -Fc --no-owner --no-acl > "$dump"
+ls -lh "$dump"
+```
+
+```bash
+# Server pre-restore backup
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
+  'cd ~/Mnemonic && mkdir -p backups/db-dumps && set -a && . ./.env && set +a && DBURL=${DATABASE_URL%\?schema=public} && ts=$(date +%Y%m%d-%H%M%S) && pg_dump "$DBURL" -Fc --no-owner --no-acl -f "backups/db-dumps/server-before-local-sync-${ts}.dump" && ls -lh "backups/db-dumps/server-before-local-sync-${ts}.dump"'
+```
+
+```bash
+# Transfer local dump and uploaded files
+dump=$(ls -t backups/db-dumps/mnemonic-local-source-*.dump | head -n 1)
+rsync -az --stats \
+  -e 'ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes' \
+  "$dump" ubuntu@124.221.123.13:/home/ubuntu/Mnemonic/backups/db-dumps/
+
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
+  'mkdir -p /home/ubuntu/Mnemonic/public/uploads'
+rsync -az --delete --stats \
+  -e 'ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes' \
+  public/uploads/ ubuntu@124.221.123.13:/home/ubuntu/Mnemonic/public/uploads/
+```
+
+```bash
+# Server deploy and local-source database restore
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
+  'set -e; sudo systemctl stop mnemonic; cd ~/Mnemonic; git fetch origin; git pull --ff-only origin main; dump=$(ls -t backups/db-dumps/mnemonic-local-source-*.dump | head -n 1); dump_base=$(basename "$dump"); set -a; . ./.env; set +a; DBURL=${DATABASE_URL%\?schema=public}; psql "$DBURL" -v ON_ERROR_STOP=1 -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid();" >/dev/null; sudo docker run --rm --network host -v "$PWD/backups/db-dumps:/dumps:ro" -e DBURL="$DBURL" -e DUMP="$dump_base" postgres:16-alpine sh -lc '\''pg_restore --clean --if-exists --no-owner --no-acl --dbname "$DBURL" "/dumps/$DUMP"'\''; npm ci --no-audit --no-fund; npm run db:deploy; NODE_OPTIONS=--max_old_space_size=1536 npm run build; sudo systemctl restart mnemonic; sudo systemctl is-active mnemonic'
+```
+
+```bash
+# Final verification
+git status --short --branch
+git rev-parse --short HEAD
+git rev-parse --short origin/main
+
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
+  'cd ~/Mnemonic && git status --short --branch && git rev-parse --short HEAD && sudo systemctl is-active mnemonic && find public/uploads -type f | wc -l && du -sh public/uploads | awk '\''{print $1}'\'''
+
+curl -fsS -I http://124.221.123.13:3000/ | sed -n '1,12p'
+curl -fsS http://124.221.123.13:3000/api/word-card/memory | head -c 300
+```
+
 Important production gotchas:
 
 - 2026-05-23 deployment recovery: HTTPS GitHub push was completed via GitHub Desktop, and production was recovered after an interrupted `npm install`/build caused high memory pressure. A 2GB swapfile now exists on the server at `/swapfile` and is persisted in `/etc/fstab`; keep it for future Next.js builds on this 2GB instance.

@@ -12,7 +12,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { canEditMnemonic, canReviewSubmissions, canViewMnemonic } from "@/lib/permissions";
-import { mnemonicScore } from "@/lib/ranking";
+import { sortPublicMnemonics } from "@/lib/ranking";
 import { ratingRemembered, scheduleReview } from "@/lib/review/scheduler";
 import { getCurrentUser, requireRole, requireUser } from "@/lib/auth/session";
 import { markdownToPlainText, renderMnemonicMarkdown } from "@/lib/wiki-links/renderer";
@@ -389,7 +389,10 @@ export async function reviewSubmissionAction(formData: FormData) {
     if (status === MnemonicStatus.APPROVED || status === MnemonicStatus.FEATURED) {
       await tx.user.update({
         where: { id: reviewedEntry.authorId },
-        data: { contributionScore: { increment: 10 + editorScore } }
+        data: {
+          contributionScore: { increment: 10 + editorScore },
+          wordCardContributionCount: { increment: 1 }
+        }
       });
     }
 
@@ -655,14 +658,14 @@ export async function getWordPageData(slug: string) {
   const officialEntries = word.mnemonicEntries.filter(
     (entry) => entry.sourceType === MnemonicSourceType.OFFICIAL && entry.status !== MnemonicStatus.ARCHIVED
   );
-  const publicEntries = word.mnemonicEntries
-    .filter(
+  const publicEntries = sortPublicMnemonics(
+    word.mnemonicEntries.filter(
       (entry) =>
         entry.sourceType === MnemonicSourceType.USER_PUBLIC &&
         entry.isPublic &&
         (entry.status === MnemonicStatus.APPROVED || entry.status === MnemonicStatus.FEATURED)
     )
-    .sort((a, b) => mnemonicScore(b) - mnemonicScore(a));
+  );
   const privateEntries = user
     ? word.mnemonicEntries.filter(
         (entry) =>

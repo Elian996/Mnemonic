@@ -6,7 +6,6 @@ import {
   Check,
   Circle,
   Database,
-  ExternalLink,
   Inbox,
   X,
   type LucideIcon
@@ -29,7 +28,7 @@ export default async function MePage() {
     unreadNotificationCount,
     myMnemonicCount,
     pendingUserSubmissionCount,
-    totalWordCount
+    totalAccountCount
   ] = await Promise.all([
     prisma.wordMark.groupBy({
       by: ["state"],
@@ -52,7 +51,7 @@ export default async function MePage() {
           }
         })
       : Promise.resolve(0),
-    canUseRepository ? prisma.word.count() : Promise.resolve(0)
+    canUseRepository ? prisma.user.count() : Promise.resolve(0)
   ]);
 
   const markCountByState = Object.fromEntries(
@@ -103,10 +102,11 @@ export default async function MePage() {
           {
             key: "repository" as const,
             href: "/repository",
-            label: "单词仓库",
-            value: totalWordCount,
+            label: "管理员中心",
+            value: totalAccountCount,
             icon: Database,
-            prefetch: false
+            prefetch: false,
+            mobileHidden: true
           }
         ]
       : []),
@@ -117,7 +117,8 @@ export default async function MePage() {
             href: "/me/user-submissions",
             label: "用户创作记忆卡",
             value: pendingUserSubmissionCount,
-            icon: BookMarked
+            icon: BookMarked,
+            mobileHidden: true
           }
         ]
       : [])
@@ -128,7 +129,6 @@ export default async function MePage() {
       <PublicTopBar
         user={user}
         breadcrumbs={[{ label: "首页", href: "/" }, { label: "我的" }]}
-        showBackButton={false}
         themeVariant="segmented"
       />
 
@@ -139,12 +139,10 @@ export default async function MePage() {
             <h1 id="me-title" className="mn-profile-title">
               {user.displayName}
             </h1>
-            <p className="mn-profile-handle">@{user.username}</p>
+            <p className="mn-profile-handle">
+              @{user.username} · 单词卡贡献 {user.wordCardContributionCount.toLocaleString("zh-CN")}
+            </p>
           </div>
-          <Link href={`/profile/${user.username}`} className="mn-profile-outline-button">
-            <ExternalLink className="h-4 w-4" aria-hidden />
-            公开主页
-          </Link>
         </section>
 
         <section className="mn-profile-status-strip" aria-label="学习状态">
@@ -172,6 +170,7 @@ export default async function MePage() {
                 value={module.value}
                 icon={module.icon}
                 prefetch={"prefetch" in module ? module.prefetch : undefined}
+                hideOnMobile={"mobileHidden" in module ? module.mobileHidden : undefined}
               />
             ))}
           </div>
@@ -211,16 +210,22 @@ function DirectoryLink({
   label,
   value,
   icon: Icon,
-  prefetch
+  prefetch,
+  hideOnMobile
 }: {
   href: string;
   label: string;
   value: number;
   icon: LucideIcon;
   prefetch?: boolean;
+  hideOnMobile?: boolean;
 }) {
   return (
-    <Link href={href} prefetch={prefetch} className="mn-profile-directory-row">
+    <Link
+      href={href}
+      prefetch={prefetch}
+      className={`mn-profile-directory-row${hideOnMobile ? " mn-profile-directory-row-mobile-hidden" : ""}`}
+    >
       <span className="mn-profile-directory-main">
         <span className="mn-profile-directory-icon">
           <Icon className="h-4 w-4" aria-hidden />

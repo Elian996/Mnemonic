@@ -38,7 +38,8 @@ export default async function WordPage({ params }: { params: Promise<{ slug: str
 
   const { user, word, officialEntries, publicEntries, userEntries, backlinks, directLinks } = data;
   const canEditOfficial = hasRole(user, UserRole.EDITOR);
-  const outgoingLinks = [...directLinks, ...officialEntries.flatMap((item) => item.links)];
+  const displayEntries = [...officialEntries, ...publicEntries].sort(compareDisplayMnemonicEntries);
+  const outgoingLinks = [...directLinks, ...displayEntries.flatMap((item) => item.links)];
   const linkedWordNodes = outgoingLinks.filter((link) => link.targetNode.type === "WORD");
   const categories = word.levelTags
     .map((tag) => vocabCategoryByTag[tag])
@@ -57,7 +58,7 @@ export default async function WordPage({ params }: { params: Promise<{ slug: str
             <span className="mt-2 block whitespace-pre-line">{word.meaningCn}</span>
           </>
         }
-        meta={`${officialEntries.length.toLocaleString("zh-CN")} 张记忆卡 / ${outgoingLinks.length.toLocaleString("zh-CN")} 个链接`}
+        meta={`${displayEntries.length.toLocaleString("zh-CN")} 张记忆卡 / ${outgoingLinks.length.toLocaleString("zh-CN")} 个链接`}
         actions={
           <>
           {categories.map((category) => (
@@ -104,10 +105,10 @@ export default async function WordPage({ params }: { params: Promise<{ slug: str
 
           <article className="space-y-6 p-5">
             <h3 className="text-2xl font-bold text-[#27251d]">记忆卡</h3>
-            {officialEntries.length ? (
-              officialEntries.map((item, index) => (
+            {displayEntries.length ? (
+              displayEntries.map((item, index) => (
                 <section key={item.id} className={index ? "border-t pt-6" : ""}>
-                  {officialEntries.length > 1 ? (
+                  {displayEntries.length > 1 ? (
                     <div className="mb-3 text-sm font-semibold text-muted-foreground">记忆卡 {index + 1}</div>
                   ) : null}
                   {item.splitText ? (
@@ -121,25 +122,6 @@ export default async function WordPage({ params }: { params: Promise<{ slug: str
             ) : (
               <p className="mt-4 text-muted-foreground">还没有记忆方法。请在右侧录入并保存。</p>
             )}
-            {publicEntries.length ? (
-              <section className="border-t pt-6">
-                <h3 className="text-2xl font-bold text-[#27251d]">用户公开助记</h3>
-                <div className="mt-4 space-y-5">
-                  {publicEntries.map((item, index) => (
-                    <section key={item.id} className={index ? "border-t pt-5" : ""}>
-                      <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-muted-foreground">
-                        <span>{item.author.displayName}</span>
-                        <StatusBadge value={item.status} />
-                      </div>
-                      {item.splitText ? <p className="text-lg leading-8 text-[#3b382f]">划分：{item.splitText}</p> : null}
-                      <div className="mt-2 text-lg leading-8 text-[#3b382f]">
-                        <WikiRichText html={item.contentHtml} />
-                      </div>
-                    </section>
-                  ))}
-                </div>
-              </section>
-            ) : null}
           </article>
 
           <footer className="border-t p-5">
@@ -329,4 +311,20 @@ export default async function WordPage({ params }: { params: Promise<{ slug: str
       </InteriorContainer>
     </InteriorPage>
   );
+}
+
+function compareDisplayMnemonicEntries(
+  first: { likeCount: number; dislikeCount?: number; sortOrder: number; createdAt: Date; id: string },
+  second: { likeCount: number; dislikeCount?: number; sortOrder: number; createdAt: Date; id: string }
+) {
+  const firstFeedbackScore = mnemonicFeedbackScore(first);
+  const secondFeedbackScore = mnemonicFeedbackScore(second);
+  if (firstFeedbackScore !== secondFeedbackScore) return secondFeedbackScore - firstFeedbackScore;
+  if (first.sortOrder !== second.sortOrder) return first.sortOrder - second.sortOrder;
+  const createdCompare = first.createdAt.getTime() - second.createdAt.getTime();
+  return createdCompare || first.id.localeCompare(second.id);
+}
+
+function mnemonicFeedbackScore(entry: { likeCount: number; dislikeCount?: number }) {
+  return entry.likeCount - (entry.dislikeCount ?? 0);
 }

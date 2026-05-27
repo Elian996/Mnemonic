@@ -3,6 +3,10 @@
 import type { ReactNode } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useMemo, useRef, useState } from "react";
+import {
+  LOGIN_REQUIRED_INTERACTION_MESSAGE,
+  LoginRequiredPrompt
+} from "@/components/login-required-prompt";
 import { MemoryCardTray, type LevelWordItem } from "@/components/level-word-browser";
 import { applyGuestProgressToWord } from "@/lib/guest-progress";
 import { cn } from "@/lib/utils";
@@ -38,7 +42,11 @@ export function WordCardPopupButton({
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [loginPromptMessage, setLoginPromptMessage] = useState("");
   const wordCache = useRef(new Map<string, LevelWordItem>());
+  const showLoginPrompt = (message = LOGIN_REQUIRED_INTERACTION_MESSAGE) => {
+    setLoginPromptMessage(message);
+  };
   const navigationSlugList = useMemo(() => {
     if (!navigationSlugs?.length) return [];
     const seen = new Set<string>();
@@ -198,8 +206,13 @@ export function WordCardPopupButton({
           defaultUserCardVisibility={defaultUserCardVisibility}
           canEditOfficialCards={canEditOfficialCards}
           canExportMemoryCardImages={canExportMemoryCardImages}
+          onRequireLogin={showLoginPrompt}
         />
       ) : null}
+      <LoginRequiredPrompt
+        message={loginPromptMessage}
+        onClose={() => setLoginPromptMessage("")}
+      />
     </>
   );
 }

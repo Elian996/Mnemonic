@@ -1,14 +1,12 @@
 import crypto from "node:crypto";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { MnemonicSourceType, MnemonicStatus, Prisma, UserRole, type LevelTag } from "@prisma/client";
-import { ArrowLeft } from "lucide-react";
+import { MnemonicSourceType, MnemonicStatus, Prisma, UserRole, VoteType, type LevelTag } from "@prisma/client";
 import { PublicTopBar } from "@/components/public-top-bar";
 import { LevelWordBrowser, type LevelWordItem } from "@/components/level-word-browser";
-import { DesktopModeOnly, MobileModeOnly } from "@/components/responsive-mode-switch";
+import { DesktopModeOnly } from "@/components/responsive-mode-switch";
 import { WordMemorySearch } from "@/components/word-memory-search";
 import { WordMarkSaveButton } from "@/components/word-mark-save-button";
-import { UsageManualButton } from "@/components/usage-manual-button";
 import { getSessionUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { hasRole } from "@/lib/permissions";
@@ -117,19 +115,45 @@ export default async function LevelPage({
                   status: { not: MnemonicStatus.ARCHIVED },
                   OR: [
                     { sourceType: MnemonicSourceType.OFFICIAL },
-                    { authorId: user.id, sourceType: { not: MnemonicSourceType.OFFICIAL } }
+                    { authorId: user.id, sourceType: { not: MnemonicSourceType.OFFICIAL } },
+                    {
+                      sourceType: MnemonicSourceType.USER_PUBLIC,
+                      isPublic: true,
+                      status: { in: [MnemonicStatus.APPROVED, MnemonicStatus.FEATURED] }
+                    }
                   ]
                 }
               : {
-                  sourceType: MnemonicSourceType.OFFICIAL,
-                  status: { not: MnemonicStatus.ARCHIVED }
+                  status: { not: MnemonicStatus.ARCHIVED },
+                  OR: [
+                    { sourceType: MnemonicSourceType.OFFICIAL },
+                    {
+                      sourceType: MnemonicSourceType.USER_PUBLIC,
+                      isPublic: true,
+                      status: { in: [MnemonicStatus.APPROVED, MnemonicStatus.FEATURED] }
+                    }
+                  ]
                 },
             select: {
               id: true,
               authorId: true,
               sourceType: true,
               status: true,
+              isPublic: true,
               sortOrder: true,
+              likeCount: true,
+              dislikeCount: true,
+              bookmarkCount: true,
+              votes: {
+                where: { userId: user?.id ?? "__anonymous__", type: { in: [VoteType.LIKE, VoteType.DISLIKE] } },
+                select: { type: true },
+                take: 1
+              },
+              bookmarks: {
+                where: { userId: user?.id ?? "__anonymous__" },
+                select: { id: true },
+                take: 1
+              },
               userCardOrders: {
                 where: { userId: user?.id ?? "__anonymous__" },
                 select: { sortOrder: true },
@@ -169,7 +193,7 @@ export default async function LevelPage({
     canEditOfficialCards: canEditOfficial,
     canExportMemoryCardImages,
     mnemonics: [...word.mnemonicEntries]
-      .sort((first, second) => compareMnemonicEntries(first, second, user?.id ?? null))
+      .sort(compareMnemonicEntries)
       .map((entry) => ({
         id: entry.id,
         title: entry.title,
@@ -179,6 +203,10 @@ export default async function LevelPage({
         plainText: entry.plainText,
         sourceType: entry.sourceType,
         status: entry.status,
+        likeCount: entry.likeCount,
+        dislikeCount: entry.dislikeCount,
+        userVoteType: entry.votes[0]?.type ?? null,
+        isSaved: entry.bookmarks.length > 0,
         updatedAt: entry.updatedAt.toISOString(),
         canEdit:
           entry.sourceType === MnemonicSourceType.OFFICIAL
@@ -196,46 +224,24 @@ export default async function LevelPage({
 
   return (
     <InteriorPage className="mn-level-page">
-      <DesktopModeOnly>
-        <PublicTopBar
-          user={user}
-          breadcrumbs={[
-            { label: "首页", href: "/" },
-            { label: category.label }
-          ]}
-          actionsSlot={
-            <>
-              <UsageManualButton />
-              <WordMarkSaveButton />
-            </>
-          }
-          rightSlot={
+      <PublicTopBar
+        user={user}
+        breadcrumbs={[
+          { label: "首页", href: "/" },
+          { label: category.label }
+        ]}
+        themeVariant="segmented"
+        actionsSlot={<WordMarkSaveButton />}
+        rightSlot={
+          <DesktopModeOnly>
             <WordMemorySearch
               isAuthenticated={Boolean(user)}
               canEditOfficialCards={canEditOfficial}
               canExportMemoryCardImages={canExportMemoryCardImages}
             />
-          }
-        />
-      </DesktopModeOnly>
-
-      <MobileModeOnly>
-        <header className="mn-mobile-level-top">
-          <Link href="/" className="mn-mobile-level-back" aria-label="返回首页">
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-          </Link>
-          <div className="min-w-0">
-            <p className="mn-mobile-level-title">{category.label}</p>
-            <p className="mn-mobile-level-meta">
-              {totalCount.toLocaleString("zh-CN")} 词 / 第 {currentPage} / {totalPages} 页
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <UsageManualButton className="h-10 w-10" />
-            <WordMarkSaveButton />
-          </div>
-        </header>
-      </MobileModeOnly>
+          </DesktopModeOnly>
+        }
+      />
 
       <InteriorContainer wide className="mn-level-container">
         <DesktopModeOnly>
@@ -331,15 +337,13 @@ type MnemonicOrderEntry = {
   authorId: string;
   sourceType: MnemonicSourceType;
   sortOrder: number;
+  likeCount?: number;
+  dislikeCount?: number;
   createdAt?: Date;
   userCardOrders?: { sortOrder: number }[];
 };
 
-function compareMnemonicEntries(
-  first: MnemonicOrderEntry,
-  second: MnemonicOrderEntry,
-  userId: string | null
-) {
+function compareMnemonicEntries(first: MnemonicOrderEntry, second: MnemonicOrderEntry) {
   const firstPersonalOrder = first.userCardOrders?.[0]?.sortOrder ?? null;
   const secondPersonalOrder = second.userCardOrders?.[0]?.sortOrder ?? null;
   if (firstPersonalOrder !== null || secondPersonalOrder !== null) {
@@ -348,9 +352,9 @@ function compareMnemonicEntries(
     if (firstPersonalOrder !== secondPersonalOrder) return firstPersonalOrder - secondPersonalOrder;
   }
 
-  const firstGroup = mnemonicDisplayGroup(first, userId);
-  const secondGroup = mnemonicDisplayGroup(second, userId);
-  if (firstGroup !== secondGroup) return firstGroup - secondGroup;
+  const firstFeedbackScore = mnemonicFeedbackScore(first);
+  const secondFeedbackScore = mnemonicFeedbackScore(second);
+  if (firstFeedbackScore !== secondFeedbackScore) return secondFeedbackScore - firstFeedbackScore;
   if (first.sortOrder !== second.sortOrder) return first.sortOrder - second.sortOrder;
   const firstCreatedAt = first.createdAt?.getTime() ?? 0;
   const secondCreatedAt = second.createdAt?.getTime() ?? 0;
@@ -358,14 +362,8 @@ function compareMnemonicEntries(
   return first.id.localeCompare(second.id);
 }
 
-function mnemonicDisplayGroup(
-  entry: { authorId: string; sourceType: MnemonicSourceType },
-  userId: string | null
-) {
-  if (userId && entry.authorId === userId && entry.sourceType !== MnemonicSourceType.OFFICIAL)
-    return 0;
-  if (entry.sourceType === MnemonicSourceType.OFFICIAL) return 1;
-  return 2;
+function mnemonicFeedbackScore(entry: Pick<MnemonicOrderEntry, "likeCount" | "dislikeCount">) {
+  return (entry.likeCount ?? 0) - (entry.dislikeCount ?? 0);
 }
 
 function LevelDatabaseUnavailablePage({

@@ -63,13 +63,15 @@ export function GuestProgressSync({
 
   const markCount = Object.keys(pendingProgress.marks).length;
   const bookmarkCount = pendingProgress.bookmarkedWordIds.length;
+  const reactionCount = Object.keys(pendingProgress.mnemonicReactions).length;
+  const orderCount = Object.keys(pendingProgress.mnemonicCardOrders).length;
   const target = accountLabel ? `「${accountLabel}」` : "当前账号";
 
   return (
     <div className="fixed bottom-4 right-4 z-[80] w-[min(380px,calc(100vw-2rem))] rounded-lg border border-[var(--mn-line)] bg-[var(--mn-panel)] p-4 text-[var(--mn-ink)] shadow-2xl">
       <p className="text-sm font-semibold">发现本浏览器的游客进度</p>
       <p className="mt-2 text-sm leading-6 text-[var(--mn-muted)]">
-        是否合并到{target}？包含 {markCount} 条单词状态、{bookmarkCount} 条收藏。共享电脑上请先确认账号。
+        是否合并到{target}？包含 {markCount} 条单词状态、{bookmarkCount} 条收藏、{reactionCount} 条单词卡反馈、{orderCount} 组置顶顺序。共享电脑上请先确认账号。
       </p>
       {status ? <p className="mt-2 text-xs font-semibold text-[var(--mn-red)]">{status}</p> : null}
       <div className="mt-3 flex justify-end gap-2">

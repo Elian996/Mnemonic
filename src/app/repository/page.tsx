@@ -1,44 +1,24 @@
 import Link from "next/link";
-import { Suspense } from "react";
-import { ChevronDown, Eye, EyeOff, Grid2X2, Inbox, List, Plus, Search, Volume2, Wrench } from "lucide-react";
-import { LevelTag, MnemonicSourceType, MnemonicStatus, Prisma, UserRole } from "@prisma/client";
+import { Eye, EyeOff, Grid2X2, List, ListChecks, Volume2, Wrench } from "lucide-react";
+import { MnemonicSourceType, MnemonicStatus, Prisma, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { getSessionUser } from "@/lib/auth/session";
+import { requireRole } from "@/lib/auth/session";
 import { hasRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { RepositoryBulkDeleteList } from "@/components/repository-bulk-delete-list";
 import { RepositoryDeleteButton } from "@/components/repository-delete-button";
-import { RepositoryContaminationPanel } from "@/components/repository-contamination-panel";
-import { RepositoryLogicAuditPanel } from "@/components/repository-logic-audit-panel";
-import { RepositoryLineWrapCleanupPanel } from "@/components/repository-line-wrap-cleanup-panel";
-import { RepositoryLogicRepairReviewPanel } from "@/components/repository-logic-repair-review-panel";
-import { RepositoryMissingImagePanel } from "@/components/repository-missing-image-panel";
-import { RepositoryWorkloadPanel, type RepositoryWorkloadRecord } from "@/components/repository-workload-panel";
+import { RepositoryKeyboardController } from "@/components/repository-keyboard-controller";
+import { RepositoryReviewPassButton } from "@/components/repository-review-pass-button";
+import { RepositoryGlobalWordSearch } from "@/components/repository-global-word-search";
 import { WordCardPopupButton } from "@/components/word-card-popup-button";
-import {
-  RepositoryMissingMnemonicPanel,
-  missingMnemonicHref,
-  type MissingMnemonicCategory
-} from "@/components/repository-missing-mnemonic-panel";
 import { AutoSubmitSelect } from "@/components/auto-submit-select";
 import { PublicTopBar } from "@/components/public-top-bar";
-import { vocabCategories } from "@/lib/vocab-categories";
-import { getMnemonicContaminationAudit } from "@/lib/mnemonic-contamination-audit";
-import { readMnemonicLineWrapCleanupReport } from "@/lib/mnemonic-line-wrap-cleanup-report";
-import { readMnemonicMissingImageReport } from "@/lib/mnemonic-missing-image-report";
-import { readMnemonicLogicAuditReport } from "@/lib/mnemonic-logic-audit-report";
-import { readLogicAuditRepairReviewItems } from "@/lib/logic-audit-repair-review";
-import { repairProgressWorkloadAuditAction } from "@/lib/repository-workload";
 import { bulkDeleteWordsFromRepositoryAction } from "@/lib/services/word-service";
-import {
-  codexP0ManualRestoreAction,
-  codexP0RepairHref,
-  codexP0RepairMarker,
-  metadataHasCodexP0RepairMarker
-} from "@/lib/codex-p0-repair";
+import { repositoryReviewPassActionForScope } from "@/lib/repository-review";
+
+export const dynamic = "force-dynamic";
 
 type RepositorySearchParams = {
   q?: string;
@@ -52,32 +32,10 @@ type RepositorySearchParams = {
   deleted?: string;
 };
 
-const alphabet = "abcdefghijklmnopqrstuvwxyz".split("");
 const pageSize = 120;
-const missingMnemonicPreviewSize = 24;
-const routeFillEditorNotePrefix = "Codex route-fill:";
-const workloadStartUtc = new Date(Date.UTC(2026, 4, 17, 16, 0, 0));
-const halfDayMs = 12 * 60 * 60 * 1000;
-const shanghaiOffsetMs = 8 * 60 * 60 * 1000;
-const workloadAuditActions = [
-  "MNEMONIC_QUICK_CREATE",
-  "MNEMONIC_QUICK_UPDATE",
-  "MNEMONIC_QUICK_DELETE",
-  "MNEMONIC_QUICK_RESTORE",
-  "USER_MNEMONIC_QUICK_CREATE",
-  "USER_MNEMONIC_QUICK_UPDATE",
-  "USER_MNEMONIC_QUICK_DELETE",
-  "USER_MNEMONIC_QUICK_RESTORE",
-  "WORD_MEANING_QUICK_UPDATE",
-  "WORD_CREATE",
-  "WORD_UPDATE",
-  "MNEMONIC_SAVE",
-  "MNEMONIC_UPDATE",
-  "MNEMONIC_ARCHIVE",
-  repairProgressWorkloadAuditAction
-];
-
-const categoryLinks = vocabCategories;
+const pdfSourceManualReviewAction = "PDF_SOURCE_CARD_FILL_MANUAL_REVIEW";
+const linkCycleRescueReviewAction = "MNEMONIC_LINK_CYCLE_RESCUE_REVIEW";
+const linkCycleRescueDoneAction = "MNEMONIC_LINK_CYCLE_RESCUE_DONE";
 
 const sortLabels: Record<string, string> = {
   recent: "最近添加",
@@ -87,11 +45,11 @@ const sortLabels: Record<string, string> = {
 };
 
 const scopeLabels: Record<string, string> = {
-  all: "当前(全部)",
-  withMnemonic: "已有记忆方法",
-  empty: "待补全",
-  routeFill: "本次补全"
+  linkCycleRescue: "待救援",
+  linkCycleRestored: "已修复",
+  pdfManual: "PDF人工"
 };
+const defaultRepositoryScope = "linkCycleRescue";
 
 export default async function RepositoryPage({
   searchParams
@@ -99,50 +57,32 @@ export default async function RepositoryPage({
   searchParams: Promise<RepositorySearchParams>;
 }) {
   const params = await searchParams;
-  const q = params.q?.trim() ?? "";
+  const initialGlobalSearchQuery = params.q?.trim() ?? "";
   const sort = sortLabels[params.sort ?? ""] ? String(params.sort) : "az";
   const view = params.view === "list" ? "list" : "grid";
   const reveal = params.reveal === "1";
-  const scope = scopeLabels[params.scope ?? ""] ? String(params.scope) : "all";
-  const letter = params.letter && alphabet.includes(params.letter.toLowerCase()) ? params.letter.toLowerCase() : "";
-  const level = categoryLinks.some((category) => category.tag === params.level) ? (params.level as LevelTag) : "";
+  const scope = scopeLabels[params.scope ?? ""] ? String(params.scope) : defaultRepositoryScope;
   const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
   const deletedCount = Math.max(0, Number.parseInt(params.deleted ?? "0", 10) || 0);
-  const activeCategory = categoryLinks.find((category) => category.tag === level);
-  const user = await getSessionUser();
-  const canUseImports = hasRole(user, UserRole.ADMIN);
+  const user = await requireRole(UserRole.REVIEWER);
   const canEditOfficialCards = hasRole(user, UserRole.EDITOR);
   const canExportMemoryCardImages = hasRole(user, UserRole.ADMIN);
+  const pdfSourceManualReviewWordIds = await getPdfSourceManualReviewWordIds();
+  const pdfSourceManualReviewCount = pdfSourceManualReviewWordIds.length;
+  const linkCycleRescueWordIds = await getLinkCycleRescueWordIds();
+  const linkCycleRescueCount = linkCycleRescueWordIds.length;
+  const linkCycleRestoredWordIds = await getLinkCycleRestoredWordIds();
+  const linkCycleRestoredCount = linkCycleRestoredWordIds.length;
+  const adminOverview = await getAdminCenterOverview();
 
-  const baseWhere = (levelFilter: LevelTag | ""): Prisma.WordWhereInput => ({
+  const baseWhere = (): Prisma.WordWhereInput => ({
     AND: [
-      q
-        ? {
-            OR: [
-              { word: { contains: q, mode: "insensitive" as const } },
-              { meaningCn: { contains: q, mode: "insensitive" as const } },
-              { shortMeaningCn: { contains: q, mode: "insensitive" as const } }
-            ]
-          }
-        : {},
-      letter && !q ? { word: { startsWith: letter } } : {},
-      levelFilter ? { levelTags: { has: levelFilter } } : {},
-      scope === "withMnemonic" ? { mnemonicEntries: { some: { status: { not: "ARCHIVED" as const } } } } : {},
-      scope === "empty" ? { mnemonicEntries: { none: { status: { not: "ARCHIVED" as const } } } } : {},
-      scope === "routeFill"
-        ? {
-            mnemonicEntries: {
-              some: {
-                sourceType: MnemonicSourceType.OFFICIAL,
-                status: { not: "ARCHIVED" as const },
-                editorNote: { startsWith: routeFillEditorNotePrefix }
-              }
-            }
-          }
-        : {}
+      scope === "linkCycleRestored" ? { id: { in: linkCycleRestoredWordIds } } : {},
+      scope === "pdfManual" ? { id: { in: pdfSourceManualReviewWordIds } } : {},
+      scope === "linkCycleRescue" ? { id: { in: linkCycleRescueWordIds } } : {}
     ]
   });
-  const where = baseWhere(level);
+  const where = baseWhere();
 
   const orderBy =
     sort === "oldest"
@@ -153,56 +93,7 @@ export default async function RepositoryPage({
           ? { word: "desc" as const }
           : { createdAt: "desc" as const };
 
-  const [
-    totalCount,
-    categoryCounts,
-    importDraftCount,
-    routeFillCount,
-    codexP0RepairCount,
-    codexP0EmptyLogs,
-    codexP0ManualRestoreLogs,
-    workloadRecords
-  ] = await Promise.all([
-    prisma.word.count({ where }),
-    Promise.all(
-      categoryLinks.map(async (category) => [
-        category.tag,
-        await prisma.word.count({ where: baseWhere(category.tag) })
-      ] as const)
-    ),
-    canUseImports ? prisma.importDraft.count({ where: { status: "DRAFT" } }) : Promise.resolve(0),
-    prisma.mnemonicEntry.count({
-      where: {
-        sourceType: MnemonicSourceType.OFFICIAL,
-        status: { not: MnemonicStatus.ARCHIVED },
-        editorNote: { startsWith: routeFillEditorNotePrefix }
-      }
-    }),
-    prisma.mnemonicEntry.count({
-      where: {
-        sourceType: MnemonicSourceType.OFFICIAL,
-        status: { not: MnemonicStatus.ARCHIVED },
-        editorNote: { contains: codexP0RepairMarker }
-      }
-    }),
-    prisma.auditLog.findMany({
-      where: { action: "CODEX_P0_SOURCE_EMPTY" },
-      select: { entityId: true, metadataJson: true }
-    }),
-    prisma.auditLog.findMany({
-      where: { action: codexP0ManualRestoreAction },
-      select: { entityId: true, metadataJson: true }
-    }),
-    getRepositoryWorkloadRecords(user?.id ?? null)
-  ]);
-  const codexP0ManuallyRestoredWordIds = new Set(codexP0ManualRestoreLogs.map((log) => log.entityId));
-  const codexP0EmptyCount = new Set(
-    codexP0EmptyLogs
-      .filter((log) => metadataHasCodexP0RepairMarker(log.metadataJson))
-      .filter((log) => !codexP0ManuallyRestoredWordIds.has(log.entityId))
-      .map((log) => log.entityId)
-  ).size;
-  const countByCategory = Object.fromEntries(categoryCounts) as Partial<Record<LevelTag, number>>;
+  const totalCount = await prisma.word.count({ where });
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const currentPage = Math.min(page, totalPages);
   const words = await prisma.word.findMany({
@@ -221,9 +112,24 @@ export default async function RepositoryPage({
     skip: (currentPage - 1) * pageSize,
     take: pageSize
   });
+  const navigationSlugs = words.map((word) => word.slug);
+  const reviewPassAction = repositoryReviewPassActionForScope(scope);
+  const reviewPassLogs =
+    user && reviewPassAction && words.length
+      ? await prisma.auditLog.findMany({
+          where: {
+            actorId: user.id,
+            action: reviewPassAction,
+            entityType: "Word",
+            entityId: { in: words.map((word) => word.id) }
+          },
+          select: { entityId: true }
+        })
+      : [];
+  const reviewPassedWordIds = new Set(reviewPassLogs.map((log) => log.entityId));
 
   const hrefFor = (overrides: Partial<RepositorySearchParams>) => {
-    const next = { q, sort, view, reveal: reveal ? "1" : "", scope, letter, level, page: String(currentPage), ...overrides };
+    const next = { sort, view, reveal: reveal ? "1" : "", scope, page: String(currentPage), ...overrides };
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(next)) {
       if (value && !(key === "page" && value === "1")) query.set(key, value);
@@ -239,38 +145,33 @@ export default async function RepositoryPage({
         breadcrumbs={[
           { label: "首页", href: "/" },
           { label: "我的", href: "/me" },
-          { label: "单词仓库" }
+          { label: "管理员中心" }
         ]}
         actionsSlot={
           <>
-            {canUseImports ? (
-              <Link href="/imports" className="mn-repository-top-action">
-                <Inbox className="h-4 w-4" />
-                <span>草稿</span>
-                {importDraftCount ? <span className="mn-repository-top-count">{importDraftCount}</span> : null}
-              </Link>
-            ) : null}
-            <Link href={codexP0RepairHref} className="mn-repository-top-action">
-              <Wrench className="h-4 w-4" />
-              <span>修复</span>
-              {codexP0RepairCount || codexP0EmptyCount ? (
-                <span className="mn-repository-top-count">
-                  {codexP0RepairCount}
-                  {codexP0EmptyCount ? `+${codexP0EmptyCount}` : ""}
-                </span>
-              ) : null}
-            </Link>
             <Link
-              href={`${hrefFor({ q: "", sort: "az", view: "grid", reveal: "1", scope: "routeFill", letter: "", level: "", page: "1" })}#word-list`}
+              href={`${hrefFor({ q: "", sort: "az", view: "grid", reveal: "1", scope: "linkCycleRescue", page: "1" })}#word-list`}
               className="mn-repository-top-action"
             >
-              <Grid2X2 className="h-4 w-4" />
-              <span>本次补全</span>
-              <span className="mn-repository-top-count">{routeFillCount.toLocaleString("zh-CN")}</span>
+              <Wrench className="h-4 w-4" />
+              <span>待救援</span>
+              <span className="mn-repository-top-count">{linkCycleRescueCount.toLocaleString("zh-CN")}</span>
             </Link>
-            <Link href="/#new-word" className="mn-repository-top-action is-primary" aria-label="新建单词">
-              <Plus className="h-4 w-4" />
-              <span>新建</span>
+            <Link
+              href={`${hrefFor({ q: "", sort: "az", view: "grid", reveal: "1", scope: "linkCycleRestored", page: "1" })}#word-list`}
+              className="mn-repository-top-action"
+            >
+              <ListChecks className="h-4 w-4" />
+              <span>已修复</span>
+              <span className="mn-repository-top-count">{linkCycleRestoredCount.toLocaleString("zh-CN")}</span>
+            </Link>
+            <Link
+              href={`${hrefFor({ q: "", sort: "az", view: "grid", reveal: "1", scope: "pdfManual", page: "1" })}#word-list`}
+              className="mn-repository-top-action"
+            >
+              <ListChecks className="h-4 w-4" />
+              <span>PDF人工</span>
+              <span className="mn-repository-top-count">{pdfSourceManualReviewCount.toLocaleString("zh-CN")}</span>
             </Link>
           </>
         }
@@ -279,21 +180,45 @@ export default async function RepositoryPage({
       <section className="mn-repository-container">
         <header className="mn-repository-hero">
           <div className="mn-repository-hero-copy">
-            <p className="mn-repository-eyebrow">repository</p>
-            <h1 className="mn-repository-title">单词仓库</h1>
+            <p className="mn-repository-eyebrow">admin center</p>
+            <h1 className="mn-repository-title">管理员中心</h1>
             <p className="mn-repository-description">
-              {activeCategory ? `${activeCategory.label} ` : "全部词库 "}
-              {scope !== "all" ? ` / ${scopeLabels[scope]}` : ""}
-              {letter && !q ? ` / ${letter.toUpperCase()} 开头` : ""}
-              {q ? ` / 搜索「${q}」` : ""}
+              当前工作堆：{scopeLabels[scope]}
             </p>
-            {activeCategory ? <p className="mn-repository-category-note">{activeCategory.description}</p> : null}
           </div>
-          <div className="mn-repository-hero-meta" aria-label="仓库分页">
+          <div className="mn-repository-hero-meta" aria-label="管理员中心分页">
             <span>{totalCount.toLocaleString("zh-CN")} 词</span>
             <span>第 {currentPage} / {totalPages} 页</span>
           </div>
         </header>
+
+        <section className="mn-admin-overview" aria-label="后台数据概览">
+          <AdminMetric
+            label="账号总数"
+            value={adminOverview.totalAccounts}
+            detail={`${adminOverview.activeAccounts.toLocaleString("zh-CN")} 活跃 / ${adminOverview.suspendedAccounts.toLocaleString("zh-CN")} 停用`}
+          />
+          <AdminMetric
+            label="普通账号"
+            value={adminOverview.userAccounts}
+            detail={`后台账号 ${adminOverview.staffAccounts.toLocaleString("zh-CN")}`}
+          />
+          <AdminMetric
+            label="普通账号创卡"
+            value={adminOverview.cardsCreatedByOrdinaryUsers}
+            detail="未归档个人记忆卡"
+          />
+          <AdminMetric
+            label="待审核公开卡"
+            value={adminOverview.pendingUserPublicCards}
+            detail={`已公开 ${adminOverview.approvedUserPublicCards.toLocaleString("zh-CN")}`}
+          />
+          <AdminMetric
+            label="私有用户卡"
+            value={adminOverview.privateUserCards}
+            detail={`用户卡总数 ${adminOverview.allUserCards.toLocaleString("zh-CN")}`}
+          />
+        </section>
 
         {deletedCount ? (
           <div className="mn-repository-notice">
@@ -302,18 +227,15 @@ export default async function RepositoryPage({
         ) : null}
 
         <form className="mn-repository-toolbar" action="/repository">
-          <div className="mn-repository-search-field">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
-            <Input
-              name="q"
-              defaultValue={q}
-              className="mn-repository-search-input"
-              placeholder="搜索单词或释义..."
-            />
-          </div>
+          <RepositoryGlobalWordSearch
+            initialQuery={initialGlobalSearchQuery}
+            isAuthenticated={Boolean(user)}
+            defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
+            canEditOfficialCards={canEditOfficialCards}
+            canExportMemoryCardImages={canExportMemoryCardImages}
+          />
           <input type="hidden" name="view" value={view} />
           <input type="hidden" name="reveal" value={reveal ? "1" : ""} />
-          <input type="hidden" name="level" value={level} />
           <div className="mn-repository-control-row">
             <AutoSubmitSelect name="sort" defaultValue={sort} className="mn-repository-select">
               {Object.entries(sortLabels).map(([value, label]) => (
@@ -329,7 +251,6 @@ export default async function RepositoryPage({
                 </option>
               ))}
             </AutoSubmitSelect>
-            <input type="hidden" name="letter" value={letter} />
             <Button asChild variant={view === "grid" ? "default" : "ghost"} size="icon" className={cn("mn-repository-icon-button", view === "grid" && "is-active")}>
               <Link href={hrefFor({ view: "grid", page: "1" })} aria-label="网格视图">
                 <Grid2X2 className="h-4 w-4" />
@@ -347,72 +268,10 @@ export default async function RepositoryPage({
             </Button>
           </div>
         </form>
-
-        <details className="mn-repository-filter-drawer" open={Boolean(level || letter)}>
-          <summary>
-            <span>筛选范围</span>
-            <span className="mn-repository-filter-state">
-              {activeCategory?.label ?? "全部词库"}
-              {letter ? ` / ${letter.toUpperCase()}` : ""}
-            </span>
-            <ChevronDown className="h-4 w-4" />
-          </summary>
-          <div className="mn-repository-filter-content">
-            <nav className="mn-repository-category-nav" aria-label="类别入口">
-              <Link
-                href={hrefFor({ level: "", letter: "", page: "1" })}
-                className={cn("mn-repository-filter-link", !level && "is-active")}
-              >
-                全部词库
-                <span>{totalCount.toLocaleString("zh-CN")}</span>
-              </Link>
-              {categoryLinks.map((category) => (
-                <Link
-                  key={category.tag}
-                  href={hrefFor({ level: category.tag, letter: "", page: "1" })}
-                  title={category.description}
-                  className={cn("mn-repository-filter-link", level === category.tag && "is-active")}
-                >
-                  {category.label}
-                  <span>{(countByCategory[category.tag] ?? 0).toLocaleString("zh-CN")}</span>
-                </Link>
-              ))}
-            </nav>
-            <nav className="mn-repository-letter-nav" aria-label="字母索引">
-            <Link
-              href={hrefFor({ q: "", letter: "", page: "1" })}
-              className={cn(
-                "mn-repository-letter-link",
-                !letter && "is-active"
-              )}
-            >
-              全部
-            </Link>
-              {alphabet.map((item) => (
-                <Link
-                  key={item}
-                  href={hrefFor({ q: "", letter: item, page: "1" })}
-                  className={cn("mn-repository-letter-link uppercase", letter === item && "is-active")}
-                >
-                  {item}
-                </Link>
-              ))}
-            </nav>
-          </div>
-        </details>
       </section>
 
-      <RepositoryWorkloadPanel records={workloadRecords} />
-      <Suspense fallback={<RepositoryMaintenanceFallback />}>
-        <RepositoryMaintenancePanels
-          isAuthenticated={Boolean(user)}
-          defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
-          canEditOfficialCards={canEditOfficialCards}
-          canExportMemoryCardImages={canExportMemoryCardImages}
-        />
-      </Suspense>
-
       <section id="word-list" className="mn-repository-word-section">
+        <RepositoryKeyboardController />
         {words.length === 0 ? (
           <div className="mn-repository-empty-state">
             没有找到卡片。可以换个关键词，或回到工作台新建单词。
@@ -420,7 +279,18 @@ export default async function RepositoryPage({
         ) : view === "grid" ? (
           <div className="mn-repository-word-grid">
             {words.map((word) => (
-              <article key={word.id} className="mn-repository-word-card">
+              <article
+                key={word.id}
+                data-repository-word-card="true"
+                data-repository-word-id={word.id}
+                data-repository-word-slug={word.slug}
+                data-review-passed={reviewPassedWordIds.has(word.id) ? "true" : "false"}
+                tabIndex={0}
+                className={cn(
+                  "mn-repository-word-card",
+                  reviewPassedWordIds.has(word.id) && "is-review-passed"
+                )}
+              >
                 <div className="mn-repository-word-card-head">
                   <WordCardPopupButton
                     slug={word.slug}
@@ -428,12 +298,19 @@ export default async function RepositoryPage({
                     defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
                     canEditOfficialCards={canEditOfficialCards}
                     canExportMemoryCardImages={canExportMemoryCardImages}
+                    navigationSlugs={navigationSlugs}
                     ariaLabel={`打开 ${word.word} 单词卡弹窗`}
                     className="word-card-title min-w-0 hover:text-[var(--mn-accent)]"
                   >
                     <span className="block truncate">{word.word}</span>
                   </WordCardPopupButton>
                   <div className="mn-repository-word-actions">
+                    <RepositoryReviewPassButton
+                      wordId={word.id}
+                      word={word.word}
+                      scope={scope}
+                      initialPassed={reviewPassedWordIds.has(word.id)}
+                    />
                     {word.audioUsUrl || word.audioUkUrl ? (
                       <a
                         href={word.audioUsUrl || word.audioUkUrl || "#"}
@@ -452,6 +329,7 @@ export default async function RepositoryPage({
                   defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
                   canEditOfficialCards={canEditOfficialCards}
                   canExportMemoryCardImages={canExportMemoryCardImages}
+                  navigationSlugs={navigationSlugs}
                   ariaLabel={`打开 ${word.word} 单词卡弹窗`}
                   className="mn-repository-word-preview"
                 >
@@ -507,317 +385,132 @@ export default async function RepositoryPage({
   );
 }
 
-async function RepositoryMaintenancePanels({
-  isAuthenticated,
-  defaultUserCardVisibility,
-  canEditOfficialCards,
-  canExportMemoryCardImages
+function AdminMetric({
+  label,
+  value,
+  detail
 }: {
-  isAuthenticated: boolean;
-  defaultUserCardVisibility: "private" | "public";
-  canEditOfficialCards: boolean;
-  canExportMemoryCardImages: boolean;
+  label: string;
+  value: number;
+  detail: string;
 }) {
+  return (
+    <div className="mn-admin-metric">
+      <span className="mn-admin-metric-label">{label}</span>
+      <strong>{value.toLocaleString("zh-CN")}</strong>
+      <span className="mn-admin-metric-detail">{detail}</span>
+    </div>
+  );
+}
+
+async function getAdminCenterOverview() {
   const [
-    contaminationGroups,
-    missingMnemonicGroups,
-    logicAuditReport,
-    logicRepairReviewItems,
-    lineWrapCleanupReport,
-    missingImageReport
+    totalAccounts,
+    activeAccounts,
+    suspendedAccounts,
+    userAccounts,
+    staffAccounts,
+    cardsCreatedByOrdinaryUsers,
+    allUserCards,
+    privateUserCards,
+    pendingUserPublicCards,
+    approvedUserPublicCards
   ] = await Promise.all([
-    getMnemonicContaminationAudit(),
-    getMissingMnemonicGroups(),
-    readMnemonicLogicAuditReport(),
-    readLogicAuditRepairReviewItems(),
-    readMnemonicLineWrapCleanupReport(),
-    readMnemonicMissingImageReport()
+    prisma.user.count(),
+    prisma.user.count({ where: { status: "ACTIVE" } }),
+    prisma.user.count({ where: { status: "SUSPENDED" } }),
+    prisma.user.count({ where: { role: UserRole.USER } }),
+    prisma.user.count({ where: { role: { in: [UserRole.REVIEWER, UserRole.EDITOR, UserRole.ADMIN] } } }),
+    prisma.mnemonicEntry.count({
+      where: {
+        sourceType: { not: MnemonicSourceType.OFFICIAL },
+        status: { not: MnemonicStatus.ARCHIVED },
+        author: { is: { role: UserRole.USER } }
+      }
+    }),
+    prisma.mnemonicEntry.count({
+      where: {
+        sourceType: { not: MnemonicSourceType.OFFICIAL },
+        status: { not: MnemonicStatus.ARCHIVED }
+      }
+    }),
+    prisma.mnemonicEntry.count({
+      where: {
+        sourceType: MnemonicSourceType.USER_PRIVATE,
+        status: { not: MnemonicStatus.ARCHIVED }
+      }
+    }),
+    prisma.mnemonicEntry.count({
+      where: {
+        sourceType: MnemonicSourceType.USER_PUBLIC,
+        status: MnemonicStatus.PENDING_REVIEW
+      }
+    }),
+    prisma.mnemonicEntry.count({
+      where: {
+        sourceType: MnemonicSourceType.USER_PUBLIC,
+        isPublic: true,
+        status: { in: [MnemonicStatus.APPROVED, MnemonicStatus.FEATURED] }
+      }
+    })
   ]);
 
-  return (
-    <>
-      <RepositoryLineWrapCleanupPanel
-        report={lineWrapCleanupReport}
-        isAuthenticated={isAuthenticated}
-        defaultUserCardVisibility={defaultUserCardVisibility}
-        canEditOfficialCards={canEditOfficialCards}
-        canExportMemoryCardImages={canExportMemoryCardImages}
-      />
-      <RepositoryMissingImagePanel
-        report={missingImageReport}
-        isAuthenticated={isAuthenticated}
-        defaultUserCardVisibility={defaultUserCardVisibility}
-        canEditOfficialCards={canEditOfficialCards}
-        canExportMemoryCardImages={canExportMemoryCardImages}
-      />
-      <RepositoryLogicAuditPanel report={logicAuditReport} />
-      <RepositoryLogicRepairReviewPanel
-        items={logicRepairReviewItems}
-        isAuthenticated={isAuthenticated}
-        defaultUserCardVisibility={defaultUserCardVisibility}
-        canEditOfficialCards={canEditOfficialCards}
-        canExportMemoryCardImages={canExportMemoryCardImages}
-      />
-      <RepositoryContaminationPanel groups={contaminationGroups} />
-      <RepositoryMissingMnemonicPanel
-        groups={missingMnemonicGroups}
-        isAuthenticated={isAuthenticated}
-        defaultUserCardVisibility={defaultUserCardVisibility}
-        canEditOfficialCards={canEditOfficialCards}
-        canExportMemoryCardImages={canExportMemoryCardImages}
-      />
-    </>
-  );
-}
-
-function RepositoryMaintenanceFallback() {
-  return (
-    <section className="mn-repository-panel-wrap mx-auto max-w-7xl px-5 pt-6 sm:px-8">
-      <div className="mn-repository-panel px-5 py-4 text-sm font-semibold text-[var(--mn-text-muted)] sm:px-6">
-        正在加载维护报告...
-      </div>
-    </section>
-  );
-}
-
-async function getMissingMnemonicGroups(): Promise<MissingMnemonicCategory[]> {
-  return Promise.all(
-    categoryLinks.map(async (category) => {
-      const missingWhere = missingMnemonicWhere(category.tag);
-      const [totalCount, missingCount, words] = await Promise.all([
-        prisma.word.count({ where: { levelTags: { has: category.tag } } }),
-        prisma.word.count({ where: missingWhere }),
-        prisma.word.findMany({
-          where: missingWhere,
-          select: {
-            id: true,
-            word: true,
-            slug: true,
-            meaningCn: true,
-            shortMeaningCn: true
-          },
-          orderBy: { word: "asc" },
-          take: missingMnemonicPreviewSize
-        })
-      ]);
-
-      return {
-        tag: category.tag,
-        label: category.label,
-        description: category.description,
-        totalCount,
-        missingCount,
-        href: missingMnemonicHref(category.tag),
-        words: words.map((word) => ({
-          id: word.id,
-          word: word.word,
-          slug: word.slug,
-          meaning: word.shortMeaningCn || word.meaningCn || "释义待补"
-        }))
-      };
-    })
-  );
-}
-
-function missingMnemonicWhere(tag: LevelTag): Prisma.WordWhereInput {
   return {
-    levelTags: { has: tag },
-    mnemonicEntries: { none: { status: { not: "ARCHIVED" as const } } }
+    totalAccounts,
+    activeAccounts,
+    suspendedAccounts,
+    userAccounts,
+    staffAccounts,
+    cardsCreatedByOrdinaryUsers,
+    allUserCards,
+    privateUserCards,
+    pendingUserPublicCards,
+    approvedUserPublicCards
   };
 }
 
-async function getRepositoryWorkloadRecords(actorId: string | null): Promise<RepositoryWorkloadRecord[]> {
-  if (!actorId) return [];
-
-  const now = new Date();
-  const endUtc = nextWorkloadBoundary(now);
+async function getPdfSourceManualReviewWordIds() {
   const logs = await prisma.auditLog.findMany({
     where: {
-      actorId,
-      action: { in: workloadAuditActions },
-      createdAt: { gte: workloadStartUtc, lt: endUtc }
+      action: pdfSourceManualReviewAction,
+      entityType: "Word"
     },
-    select: {
-      action: true,
-      entityType: true,
-      entityId: true,
-      metadataJson: true,
-      createdAt: true
-    },
+    select: { entityId: true },
     orderBy: { createdAt: "asc" }
   });
-
-  const entryIdsNeedingLookup = new Set<string>();
-  for (const log of logs) {
-    if (log.entityType === "MnemonicEntry" && !metadataWordIds(log.metadataJson).length) {
-      entryIdsNeedingLookup.add(log.entityId);
-    }
-  }
-
-  const entryWordIds = entryIdsNeedingLookup.size
-    ? new Map(
-        (
-          await prisma.mnemonicEntry.findMany({
-            where: { id: { in: [...entryIdsNeedingLookup] } },
-            select: { id: true, targetWordId: true }
-          })
-        ).map((entry) => [entry.id, entry.targetWordId])
-      )
-    : new Map<string, string>();
-
-  const resolvedLogs = logs.flatMap((log) =>
-    logWordIds(log, entryWordIds).map((wordId) => ({
-      ...log,
-      wordId
-    }))
-  );
-
-  const wordIds = [...new Set(resolvedLogs.map((log) => log.wordId))];
-  const wordNames = wordIds.length
-    ? new Map(
-        (
-          await prisma.word.findMany({
-            where: { id: { in: wordIds } },
-            select: { id: true, word: true }
-          })
-        ).map((word) => [word.id, word.word])
-      )
-    : new Map<string, string>();
-
-  const buckets = buildWorkloadBuckets(endUtc);
-  for (const log of resolvedLogs) {
-    const bucketIndex = Math.floor((log.createdAt.getTime() - workloadStartUtc.getTime()) / halfDayMs);
-    const bucket = buckets[bucketIndex];
-    if (!bucket) continue;
-
-    const isRepairProgressEvent = log.action === repairProgressWorkloadAuditAction;
-    bucket.eventCount += 1;
-    if (isRepairProgressEvent) {
-      bucket.repairEventCount += 1;
-    } else if (log.action.includes("MNEMONIC")) {
-      bucket.cardEventCount += 1;
-    } else if (log.action.startsWith("WORD_")) {
-      bucket.meaningEventCount += 1;
-    }
-    bucket.firstEditedAt ??= log.createdAt;
-    bucket.lastEditedAt = log.createdAt;
-
-    if (!bucket.wordIds.has(log.wordId)) {
-      bucket.wordIds.add(log.wordId);
-      bucket.sampleWords.push(wordNames.get(log.wordId) ?? "unknown");
-    }
-  }
-
-  return buckets.map((bucket) => ({
-    id: bucket.id,
-    label: bucket.label,
-    rangeLabel: bucket.rangeLabel,
-    wordCount: bucket.wordIds.size,
-    eventCount: bucket.eventCount,
-    cardEventCount: bucket.cardEventCount,
-    meaningEventCount: bucket.meaningEventCount,
-    repairEventCount: bucket.repairEventCount,
-    sampleWords: bucket.sampleWords,
-    firstEditLabel: bucket.firstEditedAt ? formatShanghaiTime(bucket.firstEditedAt) : null,
-    lastEditLabel: bucket.lastEditedAt ? formatShanghaiTime(bucket.lastEditedAt) : null,
-    isStart: bucket.startsAt.getTime() === workloadStartUtc.getTime(),
-    isCurrent: now >= bucket.startsAt && now < bucket.endsAt
-  }));
+  return [...new Set(logs.map((log) => log.entityId))];
 }
 
-type WorkloadBucket = {
-  id: string;
-  label: string;
-  rangeLabel: string;
-  startsAt: Date;
-  endsAt: Date;
-  wordIds: Set<string>;
-  sampleWords: string[];
-  eventCount: number;
-  cardEventCount: number;
-  meaningEventCount: number;
-  repairEventCount: number;
-  firstEditedAt: Date | null;
-  lastEditedAt: Date | null;
-};
+async function getLinkCycleRescueWordIds() {
+  const [reviewLogs, doneLogs] = await Promise.all([
+    prisma.auditLog.findMany({
+      where: {
+        action: linkCycleRescueReviewAction,
+        entityType: "Word"
+      },
+      select: { entityId: true },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.auditLog.findMany({
+      where: {
+        action: linkCycleRescueDoneAction,
+        entityType: "Word"
+      },
+      select: { entityId: true }
+    })
+  ]);
+  const doneWordIds = new Set(doneLogs.map((log) => log.entityId));
+  return [...new Set(reviewLogs.map((log) => log.entityId).filter((id) => !doneWordIds.has(id)))];
+}
 
-function buildWorkloadBuckets(endUtc: Date): WorkloadBucket[] {
-  const bucketCount = Math.max(1, Math.ceil((endUtc.getTime() - workloadStartUtc.getTime()) / halfDayMs));
-  return Array.from({ length: bucketCount }, (_, index) => {
-    const startsAt = new Date(workloadStartUtc.getTime() + index * halfDayMs);
-    const endsAt = new Date(startsAt.getTime() + halfDayMs);
-    const localParts = shanghaiParts(startsAt);
-    const isMorning = localParts.hour < 12;
-    const rangeLabel = isMorning ? "00:00-12:00" : "12:00-24:00";
-    const monthDay = `${String(localParts.month).padStart(2, "0")}/${String(localParts.day).padStart(2, "0")}`;
-
-    return {
-      id: startsAt.toISOString(),
-      label: `${localParts.year}/${monthDay} ${isMorning ? "上午" : "下午"}`,
-      rangeLabel,
-      startsAt,
-      endsAt,
-      wordIds: new Set<string>(),
-      sampleWords: [],
-      eventCount: 0,
-      cardEventCount: 0,
-      meaningEventCount: 0,
-      repairEventCount: 0,
-      firstEditedAt: null,
-      lastEditedAt: null
-    };
+async function getLinkCycleRestoredWordIds() {
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      action: linkCycleRescueDoneAction,
+      entityType: "Word"
+    },
+    select: { entityId: true },
+    orderBy: { createdAt: "asc" }
   });
-}
-
-function nextWorkloadBoundary(now: Date) {
-  if (now < workloadStartUtc) return new Date(workloadStartUtc.getTime() + halfDayMs);
-  const elapsed = now.getTime() - workloadStartUtc.getTime();
-  return new Date(workloadStartUtc.getTime() + (Math.floor(elapsed / halfDayMs) + 1) * halfDayMs);
-}
-
-function logWordIds(
-  log: { entityType: string; entityId: string; metadataJson: Prisma.JsonValue | null },
-  entryWordIds: Map<string, string>
-) {
-  if (log.entityType === "Word") return [log.entityId];
-  const wordIds = metadataWordIds(log.metadataJson);
-  if (wordIds.length) return wordIds;
-  if (log.entityType === "MnemonicEntry") {
-    const wordId = entryWordIds.get(log.entityId);
-    return wordId ? [wordId] : [];
-  }
-  return [];
-}
-
-function metadataWordIds(metadata: Prisma.JsonValue | null) {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
-  const value = metadata as Record<string, unknown>;
-  const wordIds = new Set<string>();
-  if (typeof value.wordId === "string" && value.wordId) {
-    wordIds.add(value.wordId);
-  }
-  for (const key of ["wordIds", "changedWordIds", "appliedWordIds"]) {
-    const rawIds = value[key];
-    if (!Array.isArray(rawIds)) continue;
-    for (const wordId of rawIds) {
-      if (typeof wordId === "string" && wordId) wordIds.add(wordId);
-    }
-  }
-  return [...wordIds];
-}
-
-function formatShanghaiTime(date: Date) {
-  const parts = shanghaiParts(date);
-  return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
-}
-
-function shanghaiParts(date: Date) {
-  const local = new Date(date.getTime() + shanghaiOffsetMs);
-  return {
-    year: local.getUTCFullYear(),
-    month: local.getUTCMonth() + 1,
-    day: local.getUTCDate(),
-    hour: local.getUTCHours(),
-    minute: local.getUTCMinutes()
-  };
+  return [...new Set(logs.map((log) => log.entityId))];
 }

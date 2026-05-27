@@ -4,6 +4,7 @@ import { ArrowLeft, LogOut, UserRound } from "lucide-react";
 import { logoutAction } from "@/lib/auth/actions";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MemoryCardFontToggle } from "@/components/memory-card-font-toggle";
+import { UsageManualButton } from "@/components/usage-manual-button";
 
 type PublicUser = {
   displayName: string;
@@ -68,6 +69,7 @@ export function PublicTopBar({
             className={themeVariant === "segmented" ? "mn-topbar-theme-segmented" : undefined}
           />
           <MemoryCardFontToggle />
+          <UsageManualButton autoOpen={!user} />
           {actionsSlot}
           <Link
             href={user ? "/me" : "/login"}

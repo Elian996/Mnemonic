@@ -421,7 +421,7 @@ export function CodexP0RepairCards({
             <LogoMark className="h-8 w-8 shrink-0" />
             <a href="/repository" className="inline-flex min-w-0 items-center gap-2 text-sm font-medium text-[#111113] hover:text-[#0057d8]">
               <ArrowLeft className="h-4 w-4 shrink-0" />
-              <span className="truncate">返回单词仓库</span>
+              <span className="truncate">返回管理员中心</span>
             </a>
           </div>
 

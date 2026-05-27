@@ -61,7 +61,11 @@ export function ProfileWordList({
   kind: ProfileListKind;
 }) {
   const router = useRouter();
+  const currentMarkState = profileKindToMarkState[kind];
   const [words, setWords] = useState(initialWords);
+  const [wordStates, setWordStates] = useState<Map<string, WordMarkState | null>>(
+    () => new Map(initialWords.map((word) => [word.id, currentMarkState]))
+  );
   const [openCards, setOpenCards] = useState<LevelWordItem[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
@@ -84,10 +88,10 @@ export function ProfileWordList({
   const pendingMarkChangesRef = useRef(new Map<string, WordMarkState | null>());
   const saveInFlightRef = useRef<Promise<boolean> | null>(null);
   const [mnemonicCardDeleteUndoIds, setMnemonicCardDeleteUndoIds] = useState<string[]>([]);
-  const currentMarkState = profileKindToMarkState[kind];
 
   useEffect(() => {
     setWords(initialWords);
+    setWordStates(new Map(initialWords.map((word) => [word.id, currentMarkState])));
     setOpenCards([]);
     setActiveCardId(null);
     setLoadingSlug(null);
@@ -111,6 +115,8 @@ export function ProfileWordList({
     () => sortProfileWords(words, sortMode, randomSeed),
     [randomSeed, sortMode, words]
   );
+  const visibleMarkStateForWord = (wordId: string) =>
+    wordStates.has(wordId) ? (wordStates.get(wordId) ?? null) : currentMarkState;
 
   const activateWordCard = useCallback((wordId: string | null) => {
     setActiveCardId(wordId);
@@ -132,7 +138,7 @@ export function ProfileWordList({
 
     const profileWord = words.find((word) => word.slug === slug);
     if (profileWord) {
-      openWord(profileWordToLevelWord(profileWord, currentMarkState));
+      openWord(profileWordToLevelWord(profileWord, visibleMarkStateForWord(profileWord.id)));
     }
 
     setLoadingSlug(slug);
@@ -177,7 +183,10 @@ export function ProfileWordList({
         return;
       }
 
-      const placeholderWord = profileWordToLevelWord(nextWord, currentMarkState);
+      const placeholderWord = profileWordToLevelWord(
+        nextWord,
+        visibleMarkStateForWord(nextWord.id)
+      );
       linkedWordCache.current.set(placeholderWord.slug, placeholderWord);
       activateWordCard(placeholderWord.id);
       setOpenCards((current) =>
@@ -203,30 +212,44 @@ export function ProfileWordList({
   );
 
   const updateWord = (updatedWord: LevelWordItem) => {
+    const nextMarkState = updatedWord.markState ?? null;
     linkedWordCache.current.set(updatedWord.slug, updatedWord);
+    setWordStates((current) => {
+      const next = new Map(current);
+      next.set(updatedWord.id, nextMarkState);
+      return next;
+    });
+    setWords((current) =>
+      current.map((word) =>
+        word.id === updatedWord.id
+          ? {
+              ...word,
+              word: updatedWord.word,
+              slug: updatedWord.slug,
+              shortMeaningCn: updatedWord.shortMeaningCn,
+              meaningCn: updatedWord.meaningCn
+            }
+          : word
+      )
+    );
     setOpenCards((current) =>
       current.map((word) => (word.id === updatedWord.id ? { ...word, ...updatedWord } : word))
     );
-    if (updatedWord.markState !== currentMarkState) {
-      setWords((current) => current.filter((word) => word.id !== updatedWord.id));
-    }
   };
 
   const applyProfileMark = async (word: ProfileWordListItem, state: WordMarkState | null) => {
     if (deletingWordId) return;
 
     const previousWords = words;
+    const previousState = visibleMarkStateForWord(word.id);
     const history = [
       ...markHistoryRef.current,
-      { word, previousState: currentMarkState, previousWords }
+      { word, previousState, previousWords }
     ];
     markHistoryRef.current = history;
     setMarkHistory(history);
     updateCachedWordMark(word.id, state);
     updatePendingMarkChange(word.id, state);
-    if (state !== currentMarkState) {
-      setWords((current) => current.filter((item) => item.id !== word.id));
-    }
   };
 
   const undoLastMark = useCallback(() => {
@@ -273,6 +296,11 @@ export function ProfileWordList({
   const canUndoLastAction = markHistory.length > 0 || mnemonicCardDeleteUndoIds.length > 0;
 
   const updateCachedWordMark = (wordId: string, state: WordMarkState | null) => {
+    setWordStates((current) => {
+      const next = new Map(current);
+      next.set(wordId, state);
+      return next;
+    });
     setOpenCards((current) =>
       current.map((word) =>
         word.id === wordId
@@ -381,6 +409,7 @@ export function ProfileWordList({
     if (deletingWordId || markingWordId) return;
 
     await applyProfileMark(word, null);
+    setWords((current) => current.filter((item) => item.id !== word.id));
     setOpenCards((current) => current.filter((item) => item.id !== word.id));
     linkedWordCache.current.delete(word.slug);
   };
@@ -623,7 +652,7 @@ export function ProfileWordList({
               <ProfileWordCard
                 key={word.id}
                 word={word}
-                markState={currentMarkState}
+                markState={visibleMarkStateForWord(word.id)}
                 showMeaning={showMeaning}
                 isEditing={isEditing}
                 isLoading={loadingSlug === word.slug}
@@ -642,7 +671,7 @@ export function ProfileWordList({
               <ProfileWordRow
                 key={word.id}
                 word={word}
-                markState={currentMarkState}
+                markState={visibleMarkStateForWord(word.id)}
                 showMeaning={showMeaning}
                 isEditing={isEditing}
                 isLoading={loadingSlug === word.slug}
@@ -681,10 +710,6 @@ export function ProfileWordList({
             const nextState = word.markState === state ? null : state;
 
             void applyProfileMark(profileWord, nextState);
-            if (nextState === "KNOWN") {
-              const nextWord = adjacentProfileWord(sortedWords, word, "next");
-              void replaceActiveWordCard(word.id, nextWord).catch(() => undefined);
-            }
           }}
           onMnemonicCardDeleteUndoChange={updateMnemonicCardDeleteUndo}
           isAuthenticated={true}
@@ -708,7 +733,7 @@ function ProfileWordCard({
   onDelete
 }: {
   word: ProfileWordListItem;
-  markState: WordMarkState;
+  markState: WordMarkState | null;
   showMeaning: boolean;
   isEditing: boolean;
   isLoading: boolean;
@@ -788,7 +813,7 @@ function ProfileWordRow({
   onDelete
 }: {
   word: ProfileWordListItem;
-  markState: WordMarkState;
+  markState: WordMarkState | null;
   showMeaning: boolean;
   isEditing: boolean;
   isLoading: boolean;
@@ -849,7 +874,7 @@ function ProfileMarkButtons({
   className
 }: {
   word: ProfileWordListItem;
-  markState: WordMarkState;
+  markState: WordMarkState | null;
   disabled: boolean;
   onMark: (word: ProfileWordListItem, state: WordMarkState | null) => void;
   className?: string;
@@ -894,9 +919,12 @@ function ProfileMarkButtons({
               onMark(word, active ? null : button.state);
             }}
             onKeyDown={(event) => event.stopPropagation()}
+            data-mark-state={button.state}
+            data-active={active ? "true" : "false"}
             aria-label={
               active ? `${word.word} 取消${button.label}标记` : `${word.word} 标记为${button.label}`
             }
+            aria-pressed={active}
             title={active ? `取消${button.label}` : button.label}
             className={cn(
               "flex h-8 w-8 shrink-0 appearance-none items-center justify-center rounded-full border transition disabled:pointer-events-none disabled:opacity-50",
@@ -1034,7 +1062,7 @@ function focusProfileWordItem(wordId: string) {
 
 function profileWordToLevelWord(
   word: ProfileWordListItem,
-  markState: WordMarkState
+  markState: WordMarkState | null
 ): LevelWordItem {
   return {
     id: word.id,

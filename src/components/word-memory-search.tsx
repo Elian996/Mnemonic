@@ -3,6 +3,10 @@
 import { Loader2, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { MemoryCardTray, type LevelWordItem } from "@/components/level-word-browser";
+import {
+  LOGIN_REQUIRED_INTERACTION_MESSAGE,
+  LoginRequiredPrompt
+} from "@/components/login-required-prompt";
 import { applyGuestProgressToWord } from "@/lib/guest-progress";
 import { cn } from "@/lib/utils";
 
@@ -36,9 +40,13 @@ export function WordMemorySearch({
   const [isResultsOpen, setIsResultsOpen] = useState(false);
   const [openCards, setOpenCards] = useState<LevelWordItem[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [loginPromptMessage, setLoginPromptMessage] = useState("");
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const linkedWordCache = useRef(new Map<string, LevelWordItem>());
+  const showLoginPrompt = (promptMessage = LOGIN_REQUIRED_INTERACTION_MESSAGE) => {
+    setLoginPromptMessage(promptMessage);
+  };
 
   useEffect(() => {
     if (!isExpanded) return;
@@ -67,6 +75,17 @@ export function WordMemorySearch({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isExpanded, isResultsOpen]);
+
+  useEffect(() => {
+    const closeForUsageManual = () => {
+      setIsResultsOpen(false);
+      setIsExpanded(false);
+      inputRef.current?.blur();
+    };
+
+    window.addEventListener("mnemonic:usage-manual-open", closeForUsageManual);
+    return () => window.removeEventListener("mnemonic:usage-manual-open", closeForUsageManual);
+  }, []);
 
   const openWord = (word: LevelWordItem) => {
     const nextWord = isAuthenticated ? word : applyGuestProgressToWord(word);
@@ -144,7 +163,7 @@ export function WordMemorySearch({
 
   return (
     <>
-      <div ref={wrapperRef} className="relative z-[70] h-9 w-9 shrink-0">
+      <div ref={wrapperRef} className="mn-word-memory-search relative z-[70] h-9 w-9 shrink-0">
         <div
           className={cn(
             "absolute right-0 top-0 h-9 overflow-visible rounded-md border border-[#d8dde6] bg-white text-[#171a1f] transition-[width,border-color,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-border dark:bg-card dark:text-foreground",
@@ -276,8 +295,13 @@ export function WordMemorySearch({
           isAuthenticated={isAuthenticated}
           canEditOfficialCards={canEditOfficialCards}
           canExportMemoryCardImages={canExportMemoryCardImages}
+          onRequireLogin={showLoginPrompt}
         />
       ) : null}
+      <LoginRequiredPrompt
+        message={loginPromptMessage}
+        onClose={() => setLoginPromptMessage("")}
+      />
     </>
   );
 }

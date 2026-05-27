@@ -7,6 +7,18 @@ const storageKey = "mnemonic_memory_card_font";
 const minFontSize = 14;
 const maxFontSize = 24;
 const defaultFontSize = 18;
+const mobileFontToggleMediaQuery = "(max-width: 767px)";
+const fontVariableNames = [
+  "--memory-card-body-size",
+  "--memory-card-body-line-height",
+  "--memory-card-note-size",
+  "--memory-card-heading-size",
+  "--memory-card-meaning-size",
+  "--word-card-title-size",
+  "--word-card-meaning-size",
+  "--word-row-title-size",
+  "--word-row-meaning-size"
+];
 
 const legacySizes: Record<string, number> = {
   normal: 16,
@@ -44,6 +56,18 @@ function applyWordCardFont(size: number) {
   window.localStorage.setItem(storageKey, String(px));
 }
 
+function clearAppliedWordCardFont() {
+  const root = document.documentElement;
+  for (const name of fontVariableNames) {
+    root.style.removeProperty(name);
+  }
+  delete root.dataset.wordCardFontSize;
+}
+
+function isMobileFontToggleDisabled() {
+  return window.matchMedia(mobileFontToggleMediaQuery).matches;
+}
+
 function isTextInputTarget(target: EventTarget | null) {
   return (
     (target instanceof HTMLInputElement && !["range", "button", "checkbox", "radio"].includes(target.type)) ||
@@ -61,6 +85,7 @@ function readAppliedFontSize(fallback: number) {
 export function MemoryCardFontToggle() {
   const [fontSize, setFontSize] = useState(defaultFontSize);
   const [isOpen, setIsOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   const setFont = useCallback((nextSize: number) => {
@@ -70,11 +95,34 @@ export function MemoryCardFontToggle() {
   }, []);
 
   useLayoutEffect(() => {
+    if (isMobileFontToggleDisabled()) {
+      clearAppliedWordCardFont();
+      return;
+    }
     setFont(readStoredFontSize());
   }, [setFont]);
 
   useEffect(() => {
+    const media = window.matchMedia(mobileFontToggleMediaQuery);
+    const syncMobileState = () => {
+      const nextIsMobile = media.matches;
+      setIsMobile(nextIsMobile);
+      if (nextIsMobile) {
+        setIsOpen(false);
+        clearAppliedWordCardFont();
+      } else {
+        setFont(readStoredFontSize());
+      }
+    };
+
+    syncMobileState();
+    media.addEventListener("change", syncMobileState);
+    return () => media.removeEventListener("change", syncMobileState);
+  }, [setFont]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isMobileFontToggleDisabled()) return;
       if (isTextInputTarget(event.target)) return;
       if (!event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
 
@@ -122,8 +170,10 @@ export function MemoryCardFontToggle() {
 
   const progress = ((fontSize - minFontSize) / (maxFontSize - minFontSize)) * 100;
 
+  if (isMobile) return null;
+
   return (
-    <div ref={wrapperRef} className="relative">
+    <div ref={wrapperRef} className="mn-memory-card-font-toggle relative">
       <Button
         type="button"
         variant="ghost"

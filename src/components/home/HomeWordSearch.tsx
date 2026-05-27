@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { Loader2, Search } from "lucide-react";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { MiniWordGraph } from "@/components/home/MiniWordGraph";
-import type { LevelWordItem } from "@/components/level-word-browser";
+import { MemoryCardTray, type LevelWordItem } from "@/components/level-word-browser";
+import {
+  LOGIN_REQUIRED_INTERACTION_MESSAGE,
+  LoginRequiredPrompt
+} from "@/components/login-required-prompt";
+import { applyGuestProgressToWord, saveGuestWordMarkState } from "@/lib/guest-progress";
 
 type HomeCategory = {
   tag: string;
@@ -24,15 +29,23 @@ type WordSearchResponse = {
 };
 
 type SearchStatus = "idle" | "loading" | "ready" | "error";
+type WordMarkState = NonNullable<LevelWordItem["markState"]>;
 
 const defaultPreview = {
-  word: "memory",
-  meaning: "记忆",
-  pronunciation: "/ˈmeməri/",
-  definition: "the power of the mind by which information is encoded, stored, and retrieved."
+  word: "legitimacy",
+  meaning: "n. 合法性；正当性；正统性",
+  pronunciation: "/lɪˈdʒɪtɪməsi/ · n.",
+  definition:
+    "legitimate 是已记住的形容词，表示合法的、正当的；去掉 -ate，保留 legitim，加 -acy 名词后缀，得到 legitimacy。"
 };
 
-export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
+export function HomeWordSearch({
+  categories,
+  isAuthenticated
+}: {
+  categories: HomeCategory[];
+  isAuthenticated: boolean;
+}) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<HomeSearchResult[]>([]);
@@ -40,9 +53,15 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
   const [message, setMessage] = useState("");
   const [isResultsOpen, setIsResultsOpen] = useState(false);
   const [selectedWord, setSelectedWord] = useState<LevelWordItem | null>(null);
+  const [openCards, setOpenCards] = useState<LevelWordItem[]>([]);
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [loadingSlug, setLoadingSlug] = useState<string | null>(null);
+  const [loginPromptMessage, setLoginPromptMessage] = useState("");
   const searchRef = useRef<HTMLDivElement>(null);
   const wordCacheRef = useRef(new Map<string, LevelWordItem>());
+  const showLoginPrompt = (message = LOGIN_REQUIRED_INTERACTION_MESSAGE) => {
+    setLoginPromptMessage(message);
+  };
 
   useEffect(() => {
     for (const category of categories) {
@@ -111,10 +130,33 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
     };
   }, [isResultsOpen]);
 
-  const openWordCardBySlug = async (slug: string) => {
+  useEffect(() => {
+    const closeForUsageManual = () => {
+      setIsResultsOpen(false);
+      if (searchRef.current?.contains(document.activeElement)) {
+        (document.activeElement as HTMLElement).blur();
+      }
+    };
+
+    window.addEventListener("mnemonic:usage-manual-open", closeForUsageManual);
+    return () => window.removeEventListener("mnemonic:usage-manual-open", closeForUsageManual);
+  }, []);
+
+  const activateWordCard = (wordId: string | null) => {
+    setActiveCardId(wordId);
+  };
+
+  const openWordTray = (word: LevelWordItem) => {
+    setSelectedWord(word);
+    setActiveCardId(word.id);
+    setOpenCards((current) => [word, ...current.filter((item) => item.id !== word.id)].slice(0, 5));
+  };
+
+  const openWordCardBySlug = async (slug: string, openTray = true) => {
     const cachedWord = wordCacheRef.current.get(slug);
     if (cachedWord) {
       setSelectedWord(cachedWord);
+      if (openTray) openWordTray(cachedWord);
       setIsResultsOpen(false);
       void refreshWordCardBySlug(slug);
       return;
@@ -123,7 +165,8 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
     setLoadingSlug(slug);
     setMessage("");
     try {
-      await refreshWordCardBySlug(slug, true);
+      const word = await refreshWordCardBySlug(slug, true);
+      if (word && openTray) openWordTray(word);
       setIsResultsOpen(false);
     } catch (error) {
       setStatus("error");
@@ -140,16 +183,67 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
         cache: "no-store"
       });
       if (!response.ok) throw new Error("无法打开单词卡");
-      const card = (await response.json()) as LevelWordItem;
+      const fetchedCard = (await response.json()) as LevelWordItem;
+      const card = isAuthenticated ? fetchedCard : applyGuestProgressToWord(fetchedCard);
       wordCacheRef.current.set(card.slug, card);
       setSelectedWord(card);
+      setOpenCards((current) => current.map((word) => (word.id === card.id ? card : word)));
+      return card;
     } catch (error) {
       if (raiseError) throw error;
+      return null;
     }
   };
 
   const openWordCard = async (word: HomeSearchResult) => {
     await openWordCardBySlug(word.slug);
+  };
+
+  const updateWord = (updatedWord: LevelWordItem) => {
+    wordCacheRef.current.set(updatedWord.slug, updatedWord);
+    setSelectedWord((current) => (current?.id === updatedWord.id ? updatedWord : current));
+    setOpenCards((current) => current.map((word) => (word.id === updatedWord.id ? updatedWord : word)));
+  };
+
+  const markWord = async (word: LevelWordItem, state: WordMarkState | null) => {
+    const nextWord = {
+      ...word,
+      isBookmarked: state === "UNKNOWN",
+      markState: state
+    };
+    updateWord(nextWord);
+
+    if (!isAuthenticated) {
+      saveGuestWordMarkState(word.id, state);
+      showLoginPrompt();
+      return;
+    }
+
+    const response = await fetch("/api/word-marks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wordId: word.id, state })
+    });
+    const result = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      isBookmarked?: boolean;
+      markState?: WordMarkState | null;
+    };
+    if (!response.ok) {
+      updateWord(word);
+      throw new Error(result.error || "标记失败。");
+    }
+
+    updateWord({
+      ...nextWord,
+      isBookmarked: Boolean(result.isBookmarked),
+      markState: result.markState ?? null
+    });
+  };
+
+  const openLinkedWordFromTray = async (slug: string) => {
+    await openWordCardBySlug(slug);
+    return true;
   };
 
   const openLinkedWordCard = (event: MouseEvent<HTMLDivElement>) => {
@@ -164,7 +258,7 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
 
     event.preventDefault();
     event.stopPropagation();
-    void openWordCardBySlug(slug);
+    void openWordCardBySlug(slug, false);
   };
 
   const preview = selectedWord
@@ -263,7 +357,7 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
         ))}
       </div>
 
-      <section className="mn-preview-card" aria-label={selectedWord ? `${selectedWord.word} 单词卡` : "memory 示例词卡"}>
+      <section className="mn-preview-card" aria-label={selectedWord ? `${selectedWord.word} 单词卡` : "legitimacy 示例词卡"}>
         <div className="mn-preview-word">
           <h2 className="mn-preview-word-title">{preview.word}</h2>
           <p className="mn-preview-meaning">{preview.meaning}</p>
@@ -277,10 +371,10 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
             <button
               type="button"
               className="mn-preview-button"
-              onClick={() => void openWordCardBySlug("memory")}
-              disabled={loadingSlug === "memory"}
+              onClick={() => void openWordCardBySlug("legitimacy")}
+              disabled={loadingSlug === "legitimacy"}
             >
-              {loadingSlug === "memory" ? "打开中" : "查看详情"} <span aria-hidden="true">→</span>
+              {loadingSlug === "legitimacy" ? "打开中" : "查看详情"} <span aria-hidden="true">→</span>
             </button>
           )}
         </div>
@@ -313,6 +407,26 @@ export function HomeWordSearch({ categories }: { categories: HomeCategory[] }) {
           )}
         </div>
       </section>
+
+      {openCards.length ? (
+        <MemoryCardTray
+          words={openCards}
+          activeCardId={activeCardId}
+          onActivate={activateWordCard}
+          onClose={(wordId) =>
+            setOpenCards((current) => current.filter((word) => word.id !== wordId))
+          }
+          onOpenLinkedWord={openLinkedWordFromTray}
+          onWordUpdate={updateWord}
+          onCollectionMark={markWord}
+          isAuthenticated={isAuthenticated}
+          onRequireLogin={showLoginPrompt}
+        />
+      ) : null}
+      <LoginRequiredPrompt
+        message={loginPromptMessage}
+        onClose={() => setLoginPromptMessage("")}
+      />
     </>
   );
 }

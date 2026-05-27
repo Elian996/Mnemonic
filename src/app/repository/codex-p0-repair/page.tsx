@@ -1,6 +1,6 @@
 import { MnemonicSourceType, MnemonicStatus, Prisma, UserRole } from "@prisma/client";
 import { CodexP0RepairCards } from "@/components/codex-p0-repair-cards";
-import { getSessionUser } from "@/lib/auth/session";
+import { requireRole } from "@/lib/auth/session";
 import {
   codexP0ManualRestoreAction,
   codexP0RepairMarker,
@@ -37,6 +37,7 @@ export default async function CodexP0RepairPage({
 }) {
   const params = await searchParams;
   const q = params.q?.trim() ?? "";
+  const user = await requireRole(UserRole.REVIEWER);
   const entryWhere: Prisma.MnemonicEntryWhereInput = {
     sourceType: MnemonicSourceType.OFFICIAL,
     status: { not: MnemonicStatus.ARCHIVED },
@@ -55,8 +56,7 @@ export default async function CodexP0RepairPage({
         }
       : {})
   };
-  const [user, repairedEntries, emptyItems, logicAuditReport] = await Promise.all([
-    getSessionUser(),
+  const [repairedEntries, emptyItems, logicAuditReport] = await Promise.all([
     prisma.mnemonicEntry.findMany({
       where: entryWhere,
       select: {

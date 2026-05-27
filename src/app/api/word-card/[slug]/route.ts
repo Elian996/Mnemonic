@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { MnemonicSourceType, MnemonicStatus, Prisma, UserRole, WordStatus, type User } from "@prisma/client";
+import { MnemonicSourceType, MnemonicStatus, Prisma, UserRole, VoteType, WordStatus, type User } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
-import { canEditMnemonic, hasRole } from "@/lib/permissions";
+import { canEditMnemonic, canViewMnemonic, hasRole } from "@/lib/permissions";
 import { markdownToPlainText, renderMnemonicMarkdown } from "@/lib/wiki-links/renderer";
 import { ensureWordNode, syncEntryWikiLinks } from "@/lib/wiki-links/resolve";
 import { vocabCategories } from "@/lib/vocab-categories";
@@ -42,6 +42,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
 
   if (action === "promote") {
     return promoteMnemonicCard(slug, body);
+  }
+
+  if (action === "react") {
+    return reactToMnemonicCard(slug, body);
   }
 
   if (action === "delete") {
@@ -292,8 +296,8 @@ async function promoteMnemonicCard(slug: string, body: Record<string, unknown>) 
   if (entry.status === MnemonicStatus.ARCHIVED) {
     return NextResponse.json({ error: "不能前置已删除的记忆卡" }, { status: 400 });
   }
-  if (entry.sourceType !== MnemonicSourceType.OFFICIAL && !canEditMnemonic(user, entry)) {
-    return forbiddenResponse("只能前置自己创建的记忆卡。");
+  if (!canViewMnemonic(user, entry)) {
+    return forbiddenResponse("没有权限前置这张记忆卡。");
   }
 
   await prisma.$transaction(async (tx) => {
@@ -335,12 +339,106 @@ async function promoteMnemonicCard(slug: string, body: Record<string, unknown>) 
   return NextResponse.json({ word: updatedWord ? await toWordCardPayload(updatedWord, user) : null, activeEntryId: entry.id }, { headers: noStoreHeaders });
 }
 
+async function reactToMnemonicCard(slug: string, body: Record<string, unknown>) {
+  const user = await getSessionUser();
+  if (!user) return unauthorizedResponse("请先登录后再点赞或点踩。");
+  const entryId = typeof body.entryId === "string" ? body.entryId : "";
+  const reaction = body.reaction === "LIKE" || body.reaction === "DISLIKE" ? body.reaction : "";
+  if (!entryId || !reaction) return NextResponse.json({ error: "reaction payload invalid" }, { status: 400 });
+
+  const entry = await prisma.mnemonicEntry.findUnique({
+    where: { id: entryId },
+    include: { targetWord: true }
+  });
+  if (!entry || entry.targetWord.slug !== slug) {
+    return NextResponse.json({ error: "mnemonic card not found" }, { status: 404 });
+  }
+  if (!canViewMnemonic(user, entry) || !isPubliclyReactableEntry(entry)) {
+    return forbiddenResponse("只能评价已公开的记忆卡。");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const existingVotes = await tx.vote.findMany({
+      where: {
+        userId: user.id,
+        mnemonicEntryId: entry.id,
+        type: { in: [VoteType.LIKE, VoteType.DISLIKE] }
+      },
+      select: { type: true }
+    });
+    const hadSameVote = existingVotes.some((vote) => vote.type === reaction);
+
+    await tx.vote.deleteMany({
+      where: {
+        userId: user.id,
+        mnemonicEntryId: entry.id,
+        type: { in: [VoteType.LIKE, VoteType.DISLIKE] }
+      }
+    });
+
+    if (!hadSameVote) {
+      await tx.vote.create({
+        data: {
+          userId: user.id,
+          mnemonicEntryId: entry.id,
+          type: reaction
+        }
+      });
+    }
+
+    if (!hadSameVote && reaction === VoteType.LIKE) {
+      await tx.bookmark.upsert({
+        where: {
+          userId_wordId_mnemonicEntryId: {
+            userId: user.id,
+            wordId: entry.targetWordId,
+            mnemonicEntryId: entry.id
+          }
+        },
+        update: {},
+        create: { userId: user.id, wordId: entry.targetWordId, mnemonicEntryId: entry.id }
+      });
+    } else {
+      await tx.bookmark.deleteMany({
+        where: { userId: user.id, wordId: entry.targetWordId, mnemonicEntryId: entry.id }
+      });
+    }
+
+    const [likeCount, dislikeCount, bookmarkCount] = await Promise.all([
+      tx.vote.count({ where: { mnemonicEntryId: entry.id, type: VoteType.LIKE } }),
+      tx.vote.count({ where: { mnemonicEntryId: entry.id, type: VoteType.DISLIKE } }),
+      tx.bookmark.count({ where: { mnemonicEntryId: entry.id } })
+    ]);
+
+    await tx.mnemonicEntry.update({
+      where: { id: entry.id },
+      data: { likeCount, dislikeCount, bookmarkCount }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: hadSameVote ? "MNEMONIC_REACTION_CLEAR" : `MNEMONIC_REACTION_${reaction}`,
+        entityType: "MnemonicEntry",
+        entityId: entry.id,
+        metadataJson: { wordId: entry.targetWordId, reaction }
+      }
+    });
+  });
+
+  revalidateWordSurfaces(entry.targetWord);
+  const updatedWord = await findWordCardRecord(entry.targetWord.slug, user.id);
+  return NextResponse.json({ word: updatedWord ? await toWordCardPayload(updatedWord, user) : null, activeEntryId: entry.id }, { headers: noStoreHeaders });
+}
+
 type MnemonicOrderEntry = {
   id: string;
   targetWordId?: string;
   authorId: string;
   sourceType: MnemonicSourceType;
   sortOrder: number;
+  likeCount?: number;
+  dislikeCount?: number;
   createdAt?: Date;
   userCardOrders?: { sortOrder: number }[];
 };
@@ -354,7 +452,15 @@ async function promoteVisibleMnemonicCardForUser(
     where: {
       targetWordId: entry.targetWordId,
       status: { not: MnemonicStatus.ARCHIVED },
-      OR: [{ sourceType: MnemonicSourceType.OFFICIAL }, { authorId: userId, sourceType: { not: MnemonicSourceType.OFFICIAL } }]
+      OR: [
+        { sourceType: MnemonicSourceType.OFFICIAL },
+        { authorId: userId, sourceType: { not: MnemonicSourceType.OFFICIAL } },
+        {
+          sourceType: MnemonicSourceType.USER_PUBLIC,
+          isPublic: true,
+          status: { in: [MnemonicStatus.APPROVED, MnemonicStatus.FEATURED] }
+        }
+      ]
     },
     select: {
       id: true,
@@ -362,6 +468,8 @@ async function promoteVisibleMnemonicCardForUser(
       authorId: true,
       sourceType: true,
       sortOrder: true,
+      likeCount: true,
+      dislikeCount: true,
       createdAt: true,
       userCardOrders: {
         where: { userId },
@@ -374,7 +482,7 @@ async function promoteVisibleMnemonicCardForUser(
   const targetEntry = entries.find((item) => item.id === entry.id);
   if (!targetEntry) return;
 
-  const reordered = [targetEntry, ...entries.sort((first, second) => compareMnemonicEntries(first, second, userId)).filter((item) => item.id !== entry.id)];
+  const reordered = [targetEntry, ...entries.sort(compareMnemonicEntries).filter((item) => item.id !== entry.id)];
   for (const [index, item] of reordered.entries()) {
     await tx.userMnemonicCardOrder.upsert({
       where: { userId_mnemonicEntryId: { userId, mnemonicEntryId: item.id } },
@@ -584,12 +692,24 @@ async function findWordCardRecord(slug: string, userId: string | null) {
         status: { not: MnemonicStatus.ARCHIVED },
         OR: [
           { sourceType: MnemonicSourceType.OFFICIAL },
-          { authorId: userId, sourceType: { not: MnemonicSourceType.OFFICIAL } }
+          { authorId: userId, sourceType: { not: MnemonicSourceType.OFFICIAL } },
+          {
+            sourceType: MnemonicSourceType.USER_PUBLIC,
+            isPublic: true,
+            status: { in: [MnemonicStatus.APPROVED, MnemonicStatus.FEATURED] }
+          }
         ]
       }
     : {
-        sourceType: MnemonicSourceType.OFFICIAL,
-        status: { not: MnemonicStatus.ARCHIVED }
+        status: { not: MnemonicStatus.ARCHIVED },
+        OR: [
+          { sourceType: MnemonicSourceType.OFFICIAL },
+          {
+            sourceType: MnemonicSourceType.USER_PUBLIC,
+            isPublic: true,
+            status: { in: [MnemonicStatus.APPROVED, MnemonicStatus.FEATURED] }
+          }
+        ]
       };
 
   return prisma.word.findUnique({
@@ -624,7 +744,21 @@ async function findWordCardRecord(slug: string, userId: string | null) {
           authorId: true,
           sourceType: true,
           status: true,
+          isPublic: true,
           sortOrder: true,
+          likeCount: true,
+          dislikeCount: true,
+          bookmarkCount: true,
+          votes: {
+            where: { userId: userId ?? "__anonymous__", type: { in: [VoteType.LIKE, VoteType.DISLIKE] } },
+            select: { type: true },
+            take: 1
+          },
+          bookmarks: {
+            where: { userId: userId ?? "__anonymous__" },
+            select: { id: true },
+            take: 1
+          },
           userCardOrders: {
             where: { userId: userId ?? "__anonymous__" },
             select: { sortOrder: true },
@@ -655,7 +789,7 @@ type WordCardRecord = NonNullable<Awaited<ReturnType<typeof findWordCardRecord>>
 
 async function toWordCardPayload(word: WordCardRecord, user: Pick<User, "id" | "role"> | null) {
   const markState = word.wordMarks[0]?.state ?? null;
-  const orderedEntries = [...word.mnemonicEntries].sort((first, second) => compareMnemonicEntries(first, second, user?.id ?? null));
+  const orderedEntries = [...word.mnemonicEntries].sort(compareMnemonicEntries);
   const mnemonics = await Promise.all(
     orderedEntries.map(async (entry) => ({
       id: entry.id,
@@ -666,6 +800,10 @@ async function toWordCardPayload(word: WordCardRecord, user: Pick<User, "id" | "
       plainText: entry.plainText,
       sourceType: entry.sourceType,
       status: entry.status,
+      likeCount: entry.likeCount,
+      dislikeCount: entry.dislikeCount,
+      userVoteType: entry.votes[0]?.type ?? null,
+      isSaved: entry.bookmarks.length > 0,
       updatedAt: entry.updatedAt.toISOString(),
       canEdit: canEditMnemonic(user, entry)
     }))
@@ -739,7 +877,7 @@ async function nextUserSortOrder(tx: Prisma.TransactionClient, wordId: string, a
   return (latest?.sortOrder ?? -1) + 1;
 }
 
-function compareMnemonicEntries(first: MnemonicOrderEntry, second: MnemonicOrderEntry, userId: string | null) {
+function compareMnemonicEntries(first: MnemonicOrderEntry, second: MnemonicOrderEntry) {
   const firstPersonalOrder = first.userCardOrders?.[0]?.sortOrder ?? null;
   const secondPersonalOrder = second.userCardOrders?.[0]?.sortOrder ?? null;
   if (firstPersonalOrder !== null || secondPersonalOrder !== null) {
@@ -748,9 +886,9 @@ function compareMnemonicEntries(first: MnemonicOrderEntry, second: MnemonicOrder
     if (firstPersonalOrder !== secondPersonalOrder) return firstPersonalOrder - secondPersonalOrder;
   }
 
-  const firstGroup = mnemonicDisplayGroup(first, userId);
-  const secondGroup = mnemonicDisplayGroup(second, userId);
-  if (firstGroup !== secondGroup) return firstGroup - secondGroup;
+  const firstFeedbackScore = mnemonicFeedbackScore(first);
+  const secondFeedbackScore = mnemonicFeedbackScore(second);
+  if (firstFeedbackScore !== secondFeedbackScore) return secondFeedbackScore - firstFeedbackScore;
   if (first.sortOrder !== second.sortOrder) return first.sortOrder - second.sortOrder;
   const firstCreatedAt = first.createdAt?.getTime() ?? 0;
   const secondCreatedAt = second.createdAt?.getTime() ?? 0;
@@ -758,10 +896,22 @@ function compareMnemonicEntries(first: MnemonicOrderEntry, second: MnemonicOrder
   return first.id.localeCompare(second.id);
 }
 
-function mnemonicDisplayGroup(entry: { authorId: string; sourceType: MnemonicSourceType }, userId: string | null) {
-  if (userId && entry.authorId === userId && entry.sourceType !== MnemonicSourceType.OFFICIAL) return 0;
-  if (entry.sourceType === MnemonicSourceType.OFFICIAL) return 1;
-  return 2;
+function mnemonicFeedbackScore(entry: Pick<MnemonicOrderEntry, "likeCount" | "dislikeCount">) {
+  return (entry.likeCount ?? 0) - (entry.dislikeCount ?? 0);
+}
+
+function isPubliclyReactableEntry(entry: {
+  sourceType: MnemonicSourceType;
+  status: MnemonicStatus;
+  isPublic: boolean;
+}) {
+  if (entry.status === MnemonicStatus.ARCHIVED) return false;
+  if (entry.sourceType === MnemonicSourceType.OFFICIAL) return true;
+  return (
+    entry.sourceType === MnemonicSourceType.USER_PUBLIC &&
+    entry.isPublic &&
+    (entry.status === MnemonicStatus.APPROVED || entry.status === MnemonicStatus.FEATURED)
+  );
 }
 
 function readVisibility(body: Record<string, unknown>) {

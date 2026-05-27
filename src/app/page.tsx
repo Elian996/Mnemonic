@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { HomeWordSearch } from "@/components/home/HomeWordSearch";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { PublicTopBar } from "@/components/public-top-bar";
+import { getSessionUser } from "@/lib/auth/session";
 import { vocabCategories } from "@/lib/vocab-categories";
 
 const categoryOrder = ["LEVEL_2", "LEVEL_3", "GAOKAO_3500", "CET4", "CET6"] as const;
@@ -10,39 +10,47 @@ const randomCategory = {
   shortLabel: "随机"
 };
 
+// Apple-style mobile home — frosted nav, ultralight hero, iOS search bar,
+// 3x2 category grid, Apple News-style preview card.
+// Keeps every existing class name so the HomeWordSearch/ThemeToggle markup is unchanged.
 const mobileHomeCriticalCss = `
 @media (max-width: 768px) {
-  :root {
-    --mn-bg: #f7f3ec;
-    --mn-surface: #fbf8f2;
-    --mn-text: #111820;
-    --mn-text-muted: rgba(17, 24, 32, 0.56);
-    --mn-text-faint: rgba(17, 24, 32, 0.36);
-    --mn-border: rgba(17, 24, 32, 0.12);
-    --mn-border-soft: rgba(17, 24, 32, 0.08);
-    --mn-accent: #8a3a2b;
-    --mn-shadow-soft: 0 18px 48px rgba(30, 24, 18, 0.06);
-    --mn-serif: Georgia, "Times New Roman", "Noto Serif SC", "Songti SC", serif;
-    --mn-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Noto Sans SC", Arial, sans-serif;
-  }
-
-  html,
-  body {
-    margin: 0;
+  .mn-home-page {
+    --mn-bg: #FAFAF9;
+    --mn-surface: #FFFFFF;
+    --mn-surface-soft: #F2F2F7;
+    --mn-text: #1D1D1F;
+    --mn-text-muted: rgba(29,29,31,0.6);
+    --mn-text-faint: rgba(29,29,31,0.42);
+    --mn-text-quaternary: rgba(29,29,31,0.25);
+    --mn-border: rgba(60,60,67,0.10);
+    --mn-border-soft: rgba(60,60,67,0.06);
+    --mn-accent: #007AFF;
+    --mn-serif: 'Playfair Display', 'New York', Georgia, serif;
+    --mn-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Inter', 'PingFang SC', 'Helvetica Neue', sans-serif;
+    min-height: 100vh;
     background: var(--mn-bg);
     color: var(--mn-text);
     font-family: var(--mn-sans);
-  }
-
-  .mn-home-page {
-    min-height: 100vh;
-    background:
-      radial-gradient(circle at 50% 8%, rgba(255, 255, 255, 0.82), transparent 42%),
-      var(--mn-bg);
-    color: var(--mn-text);
-    padding: 0 30px calc(34px + env(safe-area-inset-bottom));
+    padding: 0 0 calc(34px + env(safe-area-inset-bottom));
     box-sizing: border-box;
     overflow-x: hidden;
+    color-scheme: light;
+    letter-spacing: -0.01em;
+  }
+
+  html.dark .mn-home-page,
+  html[data-theme="dark"] .mn-home-page {
+    --mn-bg: #000000;
+    --mn-surface: #1C1C1E;
+    --mn-surface-soft: #2C2C2E;
+    --mn-text: #FFFFFF;
+    --mn-text-muted: rgba(255,255,255,0.6);
+    --mn-text-faint: rgba(255,255,255,0.42);
+    --mn-text-quaternary: rgba(255,255,255,0.25);
+    --mn-border: rgba(255,255,255,0.10);
+    --mn-border-soft: rgba(255,255,255,0.06);
+    color-scheme: dark;
   }
 
   .mn-home-inner {
@@ -51,344 +59,437 @@ const mobileHomeCriticalCss = `
     margin: 0 auto;
   }
 
-  .mn-topbar {
-    height: 86px;
-    padding-top: max(16px, env(safe-area-inset-top));
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid var(--mn-border-soft);
+  /* iOS frosted nav — use double-class for specificity */
+  .mn-home-page .mn-topbar {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 30 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 14px 20px !important;
+    padding-top: max(14px, calc(env(safe-area-inset-top) + 4px)) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    background: rgba(250,250,249,0.72) !important;
+    border-bottom: 0.5px solid var(--mn-border-soft) !important;
     box-sizing: border-box;
   }
 
-  .mn-topbar-brand {
-    font-family: var(--mn-serif);
-    font-size: 30px;
+  html.dark .mn-home-page .mn-topbar,
+  html[data-theme="dark"] .mn-home-page .mn-topbar {
+    background: rgba(0,0,0,0.72) !important;
+  }
+
+  .mn-home-page .mn-topbar-brand {
+    font-family: var(--mn-sans) !important;
+    font-size: 17px !important;
+    font-weight: 500 !important;
     line-height: 1;
-    letter-spacing: -0.04em;
+    letter-spacing: -0.02em;
     color: var(--mn-text);
     text-decoration: none;
   }
 
-  .mn-topbar-actions {
-    display: flex;
-    align-items: center;
-    gap: 0;
+  .mn-home-page .mn-topbar-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
   }
 
-  .mn-home-theme-toggle {
+  .mn-home-page .mn-home-theme-toggle-desktop {
     display: none !important;
   }
 
-  .mn-topbar-nav {
-    display: flex;
-    align-items: center;
-    gap: 34px;
+  .mn-home-page .mn-home-theme-toggle-mobile {
+    display: inline-flex !important;
   }
 
-  .mn-topbar-link {
+  .mn-home-page .mn-home-theme-button {
+    width: 32px !important;
+    height: 32px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 50% !important;
+    background: rgba(0,0,0,0.05) !important;
+    color: var(--mn-text-muted);
+    box-shadow: none;
+    margin-left: 6px;
+  }
+
+  .mn-home-page .mn-home-theme-button:hover {
+    background: rgba(0,0,0,0.08) !important;
+  }
+
+  html.dark .mn-home-page .mn-home-theme-button,
+  html[data-theme="dark"] .mn-home-page .mn-home-theme-button {
+    background: rgba(255,255,255,0.10) !important;
+  }
+
+  html.dark .mn-home-page .mn-home-theme-button:hover,
+  html[data-theme="dark"] .mn-home-page .mn-home-theme-button:hover {
+    background: rgba(255,255,255,0.15) !important;
+  }
+
+  .mn-home-page .mn-home-theme-button svg {
+    width: 16px !important;
+    height: 16px !important;
+    stroke-width: 1.8;
+  }
+
+  .mn-home-page .mn-topbar-nav {
+    display: flex !important;
+    align-items: center !important;
+    gap: 2px !important;
+  }
+
+  .mn-home-page .mn-topbar-link {
     position: relative;
-    font-size: 19px;
+    padding: 6px 12px !important;
+    font-size: 15px !important;
+    font-weight: 400 !important;
     line-height: 1;
-    color: var(--mn-text-muted);
+    color: var(--mn-text-muted) !important;
     text-decoration: none;
-    font-weight: 400;
+    letter-spacing: -0.01em;
   }
 
-  .mn-topbar-link.is-active {
-    color: var(--mn-text);
+  .mn-home-page .mn-topbar-link.is-active {
+    color: var(--mn-text) !important;
+    font-weight: 500 !important;
   }
 
-  .mn-topbar-link.is-active::after {
-    content: "";
-    position: absolute;
-    left: 50%;
-    bottom: -20px;
-    width: 6px;
-    height: 6px;
-    border-radius: 999px;
-    background: var(--mn-accent);
-    transform: translateX(-50%);
+  .mn-home-page .mn-topbar-link.is-active::after {
+    display: none !important;
   }
 
-  .mn-hero {
-    text-align: center;
-    padding-top: 86px;
+  /* Hero — Inter ultralight 200, paired with PingFang SC */
+  .mn-home-page .mn-hero {
+    text-align: left !important;
+    padding: 56px 28px 0 !important;
   }
 
-  .mn-hero-title {
-    font-family: var(--mn-serif);
-    font-size: clamp(58px, 17vw, 76px);
-    line-height: 0.95;
-    font-weight: 400;
-    letter-spacing: -0.065em;
-    margin: 0;
-    color: var(--mn-text);
+  .mn-home-page .mn-hero-title {
+    font-family: var(--mn-sans) !important;
+    font-size: clamp(48px, 14vw, 60px) !important;
+    line-height: 1 !important;
+    font-weight: 200 !important;
+    letter-spacing: -0.04em !important;
+    margin: 0 0 16px !important;
+    color: var(--mn-text) !important;
   }
 
-  .mn-hero-subtitle {
-    margin: 26px 0 0;
-    font-size: 22px;
-    line-height: 1.4;
-    letter-spacing: 0.18em;
-    color: var(--mn-text-muted);
-    font-weight: 400;
+  .mn-home-page .mn-hero-subtitle {
+    margin: 0 !important;
+    font-size: 17px !important;
+    line-height: 1.5 !important;
+    letter-spacing: 0.01em !important;
+    color: var(--mn-text-faint) !important;
+    font-weight: 300 !important;
   }
 
-  .mn-home-search-wrap {
-    position: relative;
-    z-index: 30;
-    width: 100%;
-    margin: 50px auto 0;
+  /* iOS search bar (gray pill) */
+  .mn-home-page .mn-home-search-wrap {
+    position: relative !important;
+    z-index: 30 !important;
+    width: auto !important;
+    margin: 36px 28px 0 !important;
   }
 
-  .mn-search {
-    width: 100%;
-    height: 72px;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    padding: 0 28px;
-    border: 1px solid var(--mn-border);
-    border-radius: 18px;
-    background: rgba(255, 255, 255, 0.32);
-    box-shadow: 0 12px 30px rgba(30, 24, 18, 0.045);
+  .mn-home-page .mn-search {
+    width: 100% !important;
+    height: 44px !important;
+    margin: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 0 12px !important;
+    border: 0 !important;
+    border-radius: 12px !important;
+    background: rgba(120,120,128,0.10) !important;
+    box-shadow: none !important;
     box-sizing: border-box;
   }
 
-  .mn-search:focus-within {
-    border-color: rgba(17, 24, 32, 0.22);
-    background: rgba(255, 255, 255, 0.42);
+  .mn-home-page .mn-search:focus-within {
+    background: rgba(120,120,128,0.16) !important;
   }
 
-  .mn-search-icon,
-  .mn-search-icon svg {
-    width: 28px;
-    height: 28px;
+  html.dark .mn-home-page .mn-search,
+  html[data-theme="dark"] .mn-home-page .mn-search {
+    background: rgba(118,118,128,0.24) !important;
   }
 
-  .mn-search-icon {
-    color: var(--mn-text-faint);
+  html.dark .mn-home-page .mn-search:focus-within,
+  html[data-theme="dark"] .mn-home-page .mn-search:focus-within {
+    background: rgba(118,118,128,0.36) !important;
+  }
+
+  .mn-home-page .mn-search-icon,
+  .mn-home-page .mn-search-icon svg {
+    width: 17px !important;
+    height: 17px !important;
+  }
+
+  .mn-home-page .mn-search-icon {
+    color: var(--mn-text-faint) !important;
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
   }
 
-  .mn-search input {
+  .mn-home-page .mn-search input {
+    -webkit-appearance: none;
+    appearance: none;
     flex: 1;
     min-width: 0;
     border: 0;
+    border-radius: 0;
     outline: none;
-    background: transparent;
-    font-size: 22px;
-    color: var(--mn-text);
+    background: transparent !important;
+    box-shadow: none;
+    font-size: 17px !important;
+    color: var(--mn-text) !important;
+    -webkit-text-fill-color: var(--mn-text) !important;
     font-family: var(--mn-sans);
+    caret-color: var(--mn-accent);
+    color-scheme: inherit;
+    letter-spacing: -0.02em;
   }
 
   .mn-search input::placeholder {
-    color: var(--mn-text-faint);
+    color: var(--mn-text-faint) !important;
+    opacity: 1;
+    -webkit-text-fill-color: var(--mn-text-faint) !important;
   }
 
-  .mn-category-row {
-    margin-top: 34px;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    align-items: center;
-    gap: 14px;
-    overflow: visible;
-    padding: 0 0 4px;
+  .mn-home-page .mn-search input {
+    background: transparent !important;
+    color: var(--mn-text) !important;
+    -webkit-text-fill-color: var(--mn-text) !important;
   }
 
-  .mn-category-button {
-    width: 100%;
-    height: 56px;
-    min-width: 0;
-    padding: 0 12px;
-    border: 1px solid var(--mn-border-soft);
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.2);
-    color: rgba(58, 45, 33, 0.86);
-    font-size: 19px;
-    font-family: var(--mn-sans);
-    font-weight: 400;
-    white-space: nowrap;
+  .mn-home-page .mn-search input::placeholder {
+    color: var(--mn-text-faint) !important;
+    -webkit-text-fill-color: var(--mn-text-faint) !important;
+  }
+
+  .mn-search input::-webkit-search-cancel-button,
+  .mn-search input::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  /* 3x2 category grid (Apple cards) */
+  .mn-home-page .mn-category-row {
+    margin: 36px 28px 0 !important;
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .mn-home-page .mn-category-button {
+    width: 100% !important;
+    height: 56px !important;
+    min-width: 0 !important;
+    padding: 0 8px !important;
+    border: 0.5px solid var(--mn-border) !important;
+    border-radius: 14px !important;
+    background: var(--mn-surface) !important;
+    color: var(--mn-text) !important;
+    font-size: 16px !important;
+    font-family: var(--mn-sans) !important;
+    font-weight: 500 !important;
+    white-space: nowrap !important;
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     text-decoration: none;
     box-sizing: border-box;
+    letter-spacing: -0.02em !important;
+    transition: transform 0.12s ease, background 0.15s ease;
   }
 
-  .mn-category-button:active,
-  .mn-preview-button:active {
-    transform: scale(0.98);
+  html.dark .mn-home-page .mn-category-button,
+  html[data-theme="dark"] .mn-home-page .mn-category-button {
+    background: var(--mn-surface) !important;
+    border-color: var(--mn-border-soft) !important;
+    color: var(--mn-text) !important;
   }
 
-  .mn-preview-card {
-    width: 100%;
-    margin: 46px auto 0;
-    display: grid;
-    grid-template-columns: 1fr;
-    border: 1px solid var(--mn-border);
-    border-radius: 20px;
-    background: rgba(255, 255, 255, 0.22);
-    box-shadow: var(--mn-shadow-soft);
-    overflow: hidden;
-    text-align: left;
+  .mn-home-page .mn-category-button:active,
+  .mn-home-page .mn-preview-button:active {
+    transform: scale(0.97);
   }
 
-  .mn-preview-word {
-    padding: 52px 36px 42px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+  /* Apple News-style preview card */
+  .mn-home-page .mn-preview-card {
+    width: auto !important;
+    margin: 36px 20px 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    border: 0 !important;
+    border-radius: 22px !important;
+    background: var(--mn-surface) !important;
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.04),
+      0 8px 32px rgba(0,0,0,0.04) !important;
+    overflow: hidden !important;
+    text-align: left !important;
   }
 
-  .mn-preview-word-title {
-    font-family: var(--mn-serif);
-    font-size: 56px;
-    line-height: 1;
-    font-weight: 400;
-    letter-spacing: -0.045em;
-    margin: 0;
-    color: var(--mn-text);
+  html.dark .mn-home-page .mn-preview-card,
+  html[data-theme="dark"] .mn-home-page .mn-preview-card {
+    background: var(--mn-surface) !important;
+    box-shadow: none !important;
+    border: 0.5px solid var(--mn-border-soft) !important;
   }
 
-  .mn-preview-meaning {
-    margin: 18px 0 0;
-    font-size: 24px;
-    color: var(--mn-accent);
-    line-height: 1.2;
+  .mn-home-page .mn-preview-word {
+    padding: 28px 28px 24px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
   }
 
-  .mn-preview-pronunciation {
-    margin: 22px 0 0;
-    font-size: 20px;
-    color: var(--mn-text-muted);
+  .mn-home-page .mn-preview-word-title {
+    font-family: var(--mn-serif) !important;
+    font-size: 40px !important;
+    line-height: 1 !important;
+    font-weight: 400 !important;
+    letter-spacing: -0.025em !important;
+    margin: 0 !important;
+    color: var(--mn-text) !important;
   }
 
-  .mn-preview-definition {
-    margin: 24px 0 0;
-    max-width: 310px;
-    font-size: 20px;
-    line-height: 1.58;
-    color: var(--mn-text-muted);
+  .mn-home-page .mn-preview-meaning {
+    margin: 18px 0 0 !important;
+    font-size: 17px !important;
+    color: var(--mn-text) !important;
+    line-height: 1.5 !important;
+    font-weight: 400 !important;
+    letter-spacing: -0.02em !important;
   }
 
-  .mn-preview-button {
-    margin-top: 36px;
-    width: fit-content;
-    height: 48px;
-    padding: 0 26px;
-    border: 1px solid rgba(138, 58, 43, 0.42);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.22);
-    color: var(--mn-accent);
-    font-size: 18px;
-    font-family: var(--mn-sans);
+  .mn-home-page .mn-preview-pronunciation {
+    margin: 10px 0 0 !important;
+    font-size: 15px !important;
+    color: var(--mn-text-faint) !important;
+    font-weight: 400 !important;
+  }
+
+  .mn-home-page .mn-preview-definition {
+    margin: 18px 0 0 !important;
+    max-width: 100% !important;
+    font-size: 15px !important;
+    line-height: 1.55 !important;
+    color: var(--mn-text-muted) !important;
+    font-weight: 300 !important;
+    letter-spacing: -0.01em !important;
+  }
+
+  .mn-home-page .mn-preview-button {
+    margin-top: 24px !important;
+    width: fit-content !important;
+    height: 40px !important;
+    padding: 0 20px !important;
+    border: 0.5px solid var(--mn-border) !important;
+    border-radius: 100px !important;
+    background: transparent !important;
+    color: var(--mn-text) !important;
+    font-size: 15px !important;
+    font-family: var(--mn-sans) !important;
+    font-weight: 400 !important;
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 14px;
-    justify-content: center;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    justify-content: center !important;
+    letter-spacing: -0.01em !important;
   }
 
-  .mn-preview-graph {
-    position: relative;
-    min-height: 350px;
-    border-top: 1px solid var(--mn-border-soft);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 22px 0 30px;
-    box-sizing: border-box;
+  html.dark .mn-home-page .mn-preview-button,
+  html[data-theme="dark"] .mn-home-page .mn-preview-button {
+    border-color: var(--mn-border-soft) !important;
   }
 
-  .mn-mini-word-graph {
-    width: min(360px, 100%);
-    height: auto;
-    display: block;
-    overflow: visible;
+  /* Hide the mini word graph on mobile — Apple-style preview is text-only */
+  .mn-home-page .mn-preview-graph {
+    display: none !important;
   }
 
-  .mn-mini-graph-ring {
-    fill: none;
-    stroke: rgba(17, 24, 32, 0.08);
-    stroke-width: 1;
-    stroke-dasharray: 3 7;
+  /* Hide the scroll cue arrow — too noisy for Apple style */
+  .mn-home-page .mn-scroll-cue {
+    display: none !important;
+  }
+}
+
+@media (max-width: 768px) and (prefers-color-scheme: dark) {
+  html[data-theme="system"] .mn-home-page {
+    --mn-bg: #000000;
+    --mn-surface: #1C1C1E;
+    --mn-surface-soft: #2C2C2E;
+    --mn-text: #FFFFFF;
+    --mn-text-muted: rgba(255,255,255,0.6);
+    --mn-text-faint: rgba(255,255,255,0.42);
+    --mn-text-quaternary: rgba(255,255,255,0.25);
+    --mn-border: rgba(255,255,255,0.10);
+    --mn-border-soft: rgba(255,255,255,0.06);
+    color-scheme: dark;
   }
 
-  .mn-mini-graph-ring-outer {
-    opacity: 0.58;
+  html[data-theme="system"] .mn-topbar {
+    background: rgba(0,0,0,0.72);
   }
 
-  .mn-mini-graph-ring-inner {
-    opacity: 0.72;
+  html[data-theme="system"] .mn-search {
+    background: rgba(118,118,128,0.24);
   }
 
-  .mn-mini-graph-link {
-    stroke: rgba(17, 24, 32, 0.16);
-    stroke-width: 1;
+  html[data-theme="system"] .mn-search:focus-within {
+    background: rgba(118,118,128,0.36);
   }
 
-  .mn-mini-graph-center {
-    fill: rgba(255, 255, 255, 0.3);
-    stroke: rgba(17, 24, 32, 0.12);
-    stroke-width: 1;
-    filter: drop-shadow(0 10px 22px rgba(30, 24, 18, 0.06));
+  html[data-theme="system"] .mn-home-theme-button {
+    background: rgba(255,255,255,0.10);
   }
 
-  .mn-mini-graph-center-text {
-    fill: var(--mn-text);
-    font-family: var(--mn-serif);
-    font-size: 24px;
-    font-weight: 400;
+  html[data-theme="system"] .mn-category-button {
+    background: var(--mn-surface);
+    border-color: var(--mn-border-soft);
   }
 
-  .mn-mini-graph-node rect {
-    fill: rgba(255, 255, 255, 0.28);
-    stroke: rgba(17, 24, 32, 0.12);
-    stroke-width: 1;
+  html[data-theme="system"] .mn-preview-card {
+    background: var(--mn-surface);
+    box-shadow: none;
+    border: 0.5px solid var(--mn-border-soft);
   }
 
-  .mn-mini-graph-node text {
-    fill: rgba(17, 24, 32, 0.76);
-    font-family: var(--mn-sans);
-    font-size: 16px;
-  }
-
-  .mn-scroll-cue {
-    margin: 28px auto 0;
-    width: 26px;
-    height: 26px;
-    color: var(--mn-accent);
-    opacity: 0.9;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .mn-scroll-cue span {
-    width: 12px;
-    height: 12px;
-    margin: 0;
-    border-right: 1.6px solid currentColor;
-    border-bottom: 1.6px solid currentColor;
-    transform: rotate(45deg);
+  html[data-theme="system"] .mn-preview-button {
+    border-color: var(--mn-border-soft);
   }
 }
 
 @media (max-width: 360px) {
+  .mn-hero { padding: 48px 24px 0; }
+  .mn-home-search-wrap { margin: 32px 24px 0; }
   .mn-category-row {
+    margin: 32px 24px 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .mn-preview-card { margin: 32px 16px 0; }
 }
 `;
 
 export default async function HomePage() {
+  const user = await getSessionUser();
   const categories = [
     randomCategory,
     ...categoryOrder
@@ -401,22 +502,12 @@ export default async function HomePage() {
       <style dangerouslySetInnerHTML={{ __html: mobileHomeCriticalCss }} />
       <main className="mn-home-page">
         <div className="mn-home-inner">
-          <header className="mn-topbar">
-            <Link href="/" className="mn-topbar-brand" aria-label="mnemonic 首页">
-              mnemonic
-            </Link>
-            <div className="mn-topbar-actions">
-              <nav className="mn-topbar-nav" aria-label="首页导航">
-                <Link href="/" className="mn-topbar-link is-active">
-                  首页
-                </Link>
-                <Link href="/me" className="mn-topbar-link">
-                  我的
-                </Link>
-              </nav>
-              <ThemeToggle variant="segmented" className="mn-home-theme-toggle" />
-            </div>
-          </header>
+          <PublicTopBar
+            user={user}
+            breadcrumbs={[{ label: "首页" }]}
+            showBackButton={false}
+            themeVariant="segmented"
+          />
 
           <section className="mn-hero" aria-labelledby="home-hero-title">
             <h1 id="home-hero-title" className="mn-hero-title">
@@ -424,7 +515,7 @@ export default async function HomePage() {
             </h1>
             <p className="mn-hero-subtitle">用联想，记住英语单词</p>
 
-            <HomeWordSearch categories={categories} />
+            <HomeWordSearch categories={categories} isAuthenticated={Boolean(user)} />
 
             <div className="mn-scroll-cue" aria-hidden="true">
               <span />

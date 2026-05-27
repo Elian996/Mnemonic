@@ -22,7 +22,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
         <InteriorHero
           eyebrow={`@${user.username}`}
           title={user.displayName}
-          description={`贡献分：${user.contributionScore} · 获赞：${likes._sum.likeCount ?? 0} · 复习次数：${user.reviewLogs.length}`}
+          description={`单词卡贡献：${user.wordCardContributionCount} · 贡献分：${user.contributionScore} · 获赞：${likes._sum.likeCount ?? 0} · 复习次数：${user.reviewLogs.length}`}
           meta="公开主页"
         />
       <section className="mt-8 grid gap-6 lg:grid-cols-2">

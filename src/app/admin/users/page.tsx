@@ -21,7 +21,7 @@ export default async function AdminUsersPage() {
                 <Td><div className="font-medium">{user.displayName}</div><div className="text-xs text-muted-foreground">{user.email}</div></Td>
                 <Td><StatusBadge value={user.role} /></Td>
                 <Td><StatusBadge value={user.status} /></Td>
-                <Td>{user.mnemonicEntries.length} 条 · {user.contributionScore} 分</Td>
+                <Td>{user.wordCardContributionCount} 张通过 · {user.contributionScore} 分</Td>
                 <Td>{user.reviewLogs.length}</Td>
                 <Td>
                   <form action={updateUserAdminAction} className="flex flex-wrap gap-2">

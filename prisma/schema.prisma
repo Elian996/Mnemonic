@@ -98,6 +98,7 @@ enum ChainStatus {
 
 enum VoteType {
   LIKE
+  DISLIKE
 }
 
 enum ReportStatus {
@@ -143,6 +144,7 @@ model User {
   status            UserStatus      @default(ACTIVE)
   defaultPublicMnemonics Boolean    @default(false)
   contributionScore Int             @default(0)
+  wordCardContributionCount Int      @default(0)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
   mnemonicEntries   MnemonicEntry[] @relation("EntryAuthor")
@@ -246,6 +248,7 @@ model MnemonicEntry {
   sortOrder             Int                    @default(0)
   editorScore           Int                    @default(0)
   likeCount             Int                    @default(0)
+  dislikeCount          Int                    @default(0)
   bookmarkCount         Int                    @default(0)
   reportCount           Int                    @default(0)
   viewCount             Int                    @default(0)

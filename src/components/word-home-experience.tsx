@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, Check, ChevronRight, Dice5, Eye, EyeOff, Search, X } from "lucide-react";
+import { Check, ChevronRight, Dice5, Eye, EyeOff, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -167,9 +167,6 @@ function Header({ wordCount, onRandom }: { wordCount: number; onRandom: () => vo
       <nav className="flex items-center gap-1.5">
         <IconLink href="/search" label="搜索">
           <Search className="h-4 w-4" />
-        </IconLink>
-        <IconLink href="/repository" label="词库">
-          <BookOpen className="h-4 w-4" />
         </IconLink>
         <button
           type="button"

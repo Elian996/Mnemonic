@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import "./globals.css";
 import { DeviceModeProvider } from "@/components/device-mode-provider";
 import { GuestProgressSync } from "@/components/guest-progress-sync";
@@ -12,14 +13,21 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+type Theme = "system" | "light" | "dark";
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const user = await getLayoutSessionUser();
+  const [user, initialTheme] = await Promise.all([getLayoutSessionUser(), getInitialTheme()]);
 
   return (
-    <html lang="zh-CN" data-theme="system" suppressHydrationWarning>
+    <html
+      lang="zh-CN"
+      data-theme={initialTheme}
+      className={initialTheme === "dark" ? "dark" : undefined}
+      suppressHydrationWarning
+    >
       <body>
         <DeviceModeProvider>
-          <SiteHeader initialTheme="system" showImports={user?.role === "ADMIN"} />
+          <SiteHeader initialTheme={initialTheme} showImports={user?.role === "ADMIN"} />
           <GuestProgressSync
             isAuthenticated={Boolean(user)}
             accountLabel={user?.displayName || user?.username || ""}
@@ -37,4 +45,17 @@ async function getLayoutSessionUser() {
   } catch {
     return null;
   }
+}
+
+async function getInitialTheme(): Promise<Theme> {
+  try {
+    const theme = (await cookies()).get("mnemonic_theme")?.value;
+    return isTheme(theme) ? theme : "system";
+  } catch {
+    return "system";
+  }
+}
+
+function isTheme(value: unknown): value is Theme {
+  return value === "system" || value === "light" || value === "dark";
 }

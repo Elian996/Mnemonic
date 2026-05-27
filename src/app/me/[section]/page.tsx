@@ -4,7 +4,6 @@ import { ArrowLeft, Check, Circle, X } from "lucide-react";
 import { WordMarkState } from "@prisma/client";
 import { ProfileWordList } from "@/components/profile-word-list";
 import { PublicTopBar } from "@/components/public-top-bar";
-import { UsageManualButton } from "@/components/usage-manual-button";
 import { WordMarkSaveButton } from "@/components/word-mark-save-button";
 import { getSessionUser, requireUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -73,12 +72,7 @@ export default async function MeSectionPage({
           { label: section.label }
         ]}
         themeVariant="segmented"
-        actionsSlot={
-          <>
-            <UsageManualButton />
-            <WordMarkSaveButton />
-          </>
-        }
+        actionsSlot={<WordMarkSaveButton />}
       />
 
       <InteriorContainer wide>

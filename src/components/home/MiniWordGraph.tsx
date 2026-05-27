@@ -1,9 +1,9 @@
 const nodes = [
-  { label: "remember", x: 142, y: 28, width: 96, height: 38 },
-  { label: "remind", x: 32, y: 102, width: 92, height: 38 },
-  { label: "recall", x: 248, y: 102, width: 82, height: 38 },
-  { label: "memorise", x: 36, y: 226, width: 108, height: 38 },
-  { label: "recollection", x: 218, y: 226, width: 118, height: 38 }
+  { label: "legitimate", x: 122, y: 28, width: 116, height: 38 },
+  { label: "legal", x: 34, y: 102, width: 82, height: 38 },
+  { label: "-acy", x: 254, y: 102, width: 70, height: 38 },
+  { label: "rightful", x: 36, y: 226, width: 96, height: 38 },
+  { label: "authority", x: 224, y: 226, width: 102, height: 38 }
 ];
 
 const links = [
@@ -17,7 +17,7 @@ const links = [
 export function MiniWordGraph() {
   return (
     <svg className="mn-mini-word-graph" viewBox="0 0 360 300" role="img" aria-labelledby="mini-word-graph-title">
-      <title id="mini-word-graph-title">memory word chain</title>
+      <title id="mini-word-graph-title">legitimacy word chain</title>
       <circle className="mn-mini-graph-ring mn-mini-graph-ring-inner" cx="180" cy="150" r="70" />
       <circle className="mn-mini-graph-ring" cx="180" cy="150" r="102" />
       <circle className="mn-mini-graph-ring mn-mini-graph-ring-outer" cx="180" cy="150" r="132" />
@@ -28,7 +28,7 @@ export function MiniWordGraph() {
 
       <circle className="mn-mini-graph-center" cx="180" cy="150" r="56" />
       <text className="mn-mini-graph-center-text" x="180" y="150" textAnchor="middle" dominantBaseline="middle">
-        memory
+        legitimacy
       </text>
 
       {nodes.map((node) => (

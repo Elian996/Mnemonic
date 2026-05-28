@@ -28,6 +28,9 @@
   --memory-card-note-size: 17px;
   --memory-card-heading-size: 22px;
   --memory-card-meaning-size: 19px;
+  --mn-memory-card-bg: #fffaf0;
+  --mn-memory-card-bg-soft: #fbf4e8;
+  --mn-memory-card-line: #e5d8c6;
   --word-card-title-size: 28px;
   --word-card-meaning-size: 16px;
   --word-row-title-size: 22px;
@@ -51,6 +54,9 @@
   --destructive-foreground: 0 0% 100%;
   --border: 240 5% 24%;
   --input: 240 5% 26%;
+  --mn-memory-card-bg: #1c1c1e;
+  --mn-memory-card-bg-soft: #181715;
+  --mn-memory-card-line: #3b342b;
   --ring: 211 100% 62%;
   color-scheme: dark;
 }
@@ -73,6 +79,9 @@
     --destructive-foreground: 0 0% 100%;
     --border: 240 5% 24%;
     --input: 240 5% 26%;
+    --mn-memory-card-bg: #1c1c1e;
+    --mn-memory-card-bg-soft: #181715;
+    --mn-memory-card-line: #3b342b;
     --ring: 211 100% 62%;
     color-scheme: dark;
   }
@@ -3088,7 +3097,22 @@ html.mn-usage-manual-open .mn-repository-global-search-popover {
       opacity 180ms ease;
     width: var(--mn-mobile-card-fixed-width) !important;
     will-change: transform;
-    background: var(--mn-memory-card-bg) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: var(--mn-memory-card-bg, #fffaf0) !important;
+    background-color: var(--mn-memory-card-bg, #fffaf0) !important;
+    background-image: none !important;
+    opacity: 1 !important;
+  }
+
+  .mn-memory-card-panel::before {
+    background: var(--mn-memory-card-bg, #fffaf0);
+    border-radius: inherit;
+    content: "";
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    z-index: 0;
   }
 
   @supports (height: 100dvh) {
@@ -3101,18 +3125,30 @@ html.mn-usage-manual-open .mn-repository-global-search-popover {
 
   :root.dark .mn-memory-card-panel,
   :root[data-theme="dark"] .mn-memory-card-panel {
-    background: var(--mn-memory-card-bg) !important;
+    background: var(--mn-memory-card-bg, #1c1c1e) !important;
+    background-color: var(--mn-memory-card-bg, #1c1c1e) !important;
   }
 
   .mn-memory-card-backdrop {
-    background: color-mix(in srgb, var(--mn-memory-card-bg) 86%, transparent) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: rgba(255, 250, 240, 0.96) !important;
+  }
+
+  :root.dark .mn-memory-card-backdrop,
+  :root[data-theme="dark"] .mn-memory-card-backdrop {
+    background: rgba(0, 0, 0, 0.78) !important;
   }
 
   .mn-memory-card-panel > header {
     cursor: grab;
     padding: 18px !important;
-    background: var(--mn-memory-card-bg) !important;
+    background: var(--mn-memory-card-bg, #fffaf0) !important;
+    background-color: var(--mn-memory-card-bg, #fffaf0) !important;
+    background-image: none !important;
     border-bottom: 0.5px solid var(--mn-memory-card-line) !important;
+    position: relative;
+    z-index: 1;
   }
 
   .mn-memory-card-panel > header h2 {
@@ -3200,8 +3236,12 @@ html.mn-usage-manual-open .mn-repository-global-search-popover {
   }
 
   .mn-memory-card-panel [data-memory-card-scroll-area="true"] {
-    background: var(--mn-memory-card-bg) !important;
+    background: var(--mn-memory-card-bg, #fffaf0) !important;
+    background-color: var(--mn-memory-card-bg, #fffaf0) !important;
+    background-image: none !important;
     padding: 18px !important;
+    position: relative;
+    z-index: 1;
   }
 
   /* Keep the mobile card surfaces in one warm paper tone. */

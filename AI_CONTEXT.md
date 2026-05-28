@@ -522,6 +522,12 @@ ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubun
 
 Use this path when the user asks to synchronize "以本地为准", "最新数据和改动", "同步到 GitHub 和腾讯云", or similar. This is a full local-source sync across GitHub, local data, and the production server; it covers code, PostgreSQL data, and uploaded image files. Do not put `.env`, private keys, database passwords, dump files, `backups/`, or `public/uploads/` into Git.
 
+Mandatory sync-method iteration rule:
+
+- Every time code, database data, uploaded assets, or any combination of them is synchronized between local, GitHub, and Tencent Cloud, first review the previous sync records and current bottlenecks, then choose the fastest safe path for the actual change scope. Do not blindly run the full local-source sync if a narrower code-only, docs-only, uploads-only, or data-only path is sufficient and safer.
+- During and after every sync, identify at least one concrete opportunity to make future syncs faster, safer, simpler, or more verifiable. If the current SOP already looks optimal, explicitly record that no better path was found and why.
+- Before the final report for any sync, update this AI document with the chosen path, what was faster or safer than the previous approach, any new reusable command/path/check discovered, and any remaining bottleneck. Treat this AI-doc update as a required sync step, not optional documentation work.
+
 Production version policy:
 
 - Current public production version is `1.1`, set by the completed 2026-05-28 code sync.
@@ -532,14 +538,20 @@ Completed sync records:
 
 - Version `1.1`, 2026-05-28: commit `645dd34` pushed to GitHub `origin/main` via GitHub Desktop after local HTTPS/SSH CLI credentials were unavailable; Tencent Cloud `/home/ubuntu/Mnemonic` fast-forwarded to `645dd34`; `mnemonic.service` restarted and verified `active`; local preflight passed `npm run typecheck`, `git diff --check`, and `npm run build`; server passed `npm ci --no-audit --no-fund`, `npm run db:deploy` with no pending migrations, and `NODE_OPTIONS=--max_old_space_size=1536 npm run build`. Data restore was not performed because this was a code-only sync; local dump path and server pre-restore backup path are not applicable. Core table counts matched local/server: `Word=41794`, `MnemonicEntry=12817`, `MemoryNode=12911`, `MemoryLink=12270`, `User=7`, `ImportDraft=13469`. Upload file counts matched local/server: `public/uploads=757`. Health checks: homepage `http://124.221.123.13:3000/` returned `200 OK`; `/register` rendered only email, display-name, and password fields without username or verification-code fields; `/api/word-card/memory` returned real JSON.
 
+Sync-method iteration records:
+
+- Version `1.1`, 2026-05-28 improvement: classify the sync by changed surfaces before running it. For this sync, the faster safe path was `code-only` for the app change and `docs-only fast-forward` for the later AI_CONTEXT record, so future similar syncs should skip database dump/restore and `public/uploads` rsync unless schema/data/assets actually changed. Reusable check: after code-only deploy, still compare core table counts and upload counts once as a guardrail, but do not create/restore dumps. Reusable GitHub fallback: if CLI push fails with local HTTPS/SSH credential issues, use GitHub Desktop `Push origin`, then verify `git rev-parse --short HEAD` equals `git rev-parse --short origin/main`. Remaining bottleneck: GitHub CLI credentials are not configured on this Mac, so fully terminal-based sync still depends on fixing GitHub auth or using GitHub Desktop as the fallback.
+
 Fastest safe order:
 
-1. Local preflight: check `git status --short --branch`, `git fetch origin`, `npm run typecheck -- --pretty false`, and `npm run build`. If `prisma/schema.prisma` changed, make sure a matching migration exists before deployment; `npx prisma migrate status` must be clean locally.
-2. Commit and push code/reports to GitHub. Prefer CLI `git push origin main`; if HTTPS credentials fail on this Mac, use GitHub Desktop's `Push origin` button and then verify `git rev-parse --short HEAD` equals `git rev-parse --short origin/main`.
-3. In parallel after preflight, create a local source dump and a server pre-restore backup. The server backup must complete before any restore. Keep both dump paths in the final report and, if this is a notable production sync, record them in this document.
-4. Transfer the local dump to `/home/ubuntu/Mnemonic/backups/db-dumps/` and sync `public/uploads/` with `rsync -az --delete` only when local is intentionally the source of truth. Use `--ignore-existing` only for additive image migration, not for full local-source sync.
-5. On the server: stop `mnemonic.service`, `git pull --ff-only origin main`, restore the local dump over the server database with the Docker `postgres:16-alpine` client, run `npm ci --no-audit --no-fund`, `npm run db:deploy`, `NODE_OPTIONS=--max_old_space_size=1536 npm run build`, then restart the service.
-6. Verify all three layers: local/GitHub/server commit hashes match; server service is `active`; homepage returns `200 OK`; `/api/word-card/memory` returns real JSON; local and server counts match for `Word`, `MnemonicEntry`, `MemoryNode`, `MemoryLink`, `User`, and `ImportDraft`; local and server `public/uploads` file counts match.
+1. Scope and optimize the sync path: decide whether the change is docs-only, code-only, uploads-only, data-only, or full local-source sync; review the last sync record; note the fastest safe path and any expected bottleneck before running the sync.
+2. Local preflight: check `git status --short --branch`, `git fetch origin`, `npm run typecheck -- --pretty false`, and `npm run build` when code changed. If `prisma/schema.prisma` changed, make sure a matching migration exists before deployment; `npx prisma migrate status` must be clean locally.
+3. Commit and push code/reports to GitHub. Prefer CLI `git push origin main`; if HTTPS credentials fail on this Mac, use GitHub Desktop's `Push origin` button and then verify `git rev-parse --short HEAD` equals `git rev-parse --short origin/main`.
+4. In parallel after preflight, create a local source dump and a server pre-restore backup only when database content will be restored or overwritten. The server backup must complete before any restore. Keep both dump paths in the final report and, if this is a notable production sync, record them in this document.
+5. Transfer the local dump to `/home/ubuntu/Mnemonic/backups/db-dumps/` and sync `public/uploads/` with `rsync -az --delete` only when local is intentionally the source of truth. Use `--ignore-existing` only for additive image migration, not for full local-source sync.
+6. On the server: stop `mnemonic.service`, `git pull --ff-only origin main`, restore the local dump over the server database with the Docker `postgres:16-alpine` client only when data restore is in scope, run `npm ci --no-audit --no-fund`, `npm run db:deploy`, `NODE_OPTIONS=--max_old_space_size=1536 npm run build`, then restart the service.
+7. Verify all three layers: local/GitHub/server commit hashes match; server service is `active`; homepage returns `200 OK`; `/api/word-card/memory` returns real JSON; local and server counts match for `Word`, `MnemonicEntry`, `MemoryNode`, `MemoryLink`, `User`, and `ImportDraft` when data was synced; local and server `public/uploads` file counts match when uploads were synced.
+8. Before the final report, update this document with the version/sync record and the sync-method iteration note: chosen path, improvement over the previous path, new reusable command/check if any, and unresolved bottleneck if any.
 
 Reusable command skeleton:
 

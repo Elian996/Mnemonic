@@ -6,6 +6,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { UserRole } from "@prisma/client";
 import { requireApiRole } from "@/lib/api-auth";
+import { createUploadDisplayVariant } from "@/lib/uploads/optimized-images";
 
 export const runtime = "nodejs";
 
@@ -110,7 +111,9 @@ async function saveImageBytes({ bytes, mimeType, originalName }: { bytes: Buffer
   const filename = `${Date.now()}-${crypto.randomUUID()}-${basename}.${extension}`;
   const uploadDir = path.join(process.cwd(), "public", "uploads", "editor");
   await fs.mkdir(uploadDir, { recursive: true });
-  await fs.writeFile(path.join(uploadDir, filename), bytes);
+  const filePath = path.join(uploadDir, filename);
+  await fs.writeFile(filePath, bytes);
+  await createUploadDisplayVariant(filePath).catch(() => undefined);
 
   return NextResponse.json({ url: `/uploads/editor/${filename}` }, { status: 201 });
 }

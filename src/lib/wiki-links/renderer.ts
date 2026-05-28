@@ -3,6 +3,7 @@ import { JSDOM } from "jsdom";
 import DOMPurify from "dompurify";
 import { MemoryNodeType } from "@prisma/client";
 import { nodeSlug, slugify } from "@/lib/slug";
+import { existingUploadDisplayVariantUrl } from "@/lib/uploads/optimized-images";
 import { ParsedWikiLink, replaceWikiLinks } from "./parser";
 
 const window = new JSDOM("").window;
@@ -45,10 +46,11 @@ export async function renderMnemonicMarkdown(markdown: string) {
     gfm: true,
     tokenizer: mnemonicTokenizer
   });
-  return purify.sanitize(html, {
+  const sanitized = purify.sanitize(html, {
     ADD_ATTR: ["data-node-type", "data-target", "src", "alt", "title"],
     ADD_TAGS: ["img"]
   });
+  return preferDisplayUploadImages(sanitized);
 }
 
 export function markdownToPlainText(markdown: string) {
@@ -65,4 +67,24 @@ function escapeHtml(value: string) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+async function preferDisplayUploadImages(html: string) {
+  const template = window.document.createElement("template");
+  template.innerHTML = html;
+  const images = Array.from(template.content.querySelectorAll("img"));
+  await Promise.all(
+    images.map(async (image) => {
+      const source = image.getAttribute("src");
+      if (!source) return;
+      const displaySource = await existingUploadDisplayVariantUrl(source);
+      if (displaySource) {
+        image.setAttribute("data-original-src", source);
+        image.setAttribute("src", displaySource);
+      }
+      image.setAttribute("loading", "lazy");
+      image.setAttribute("decoding", "async");
+    })
+  );
+  return template.innerHTML;
 }

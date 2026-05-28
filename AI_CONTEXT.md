@@ -524,9 +524,13 @@ Use this path when the user asks to synchronize "以本地为准", "最新数据
 
 Production version policy:
 
-- Current public production version is `1.0`, set by the completed 2026-05-27 local-source sync.
+- Current public production version is `1.1`, set by the completed 2026-05-28 code sync.
 - For every future upload/sync/deploy that changes production code, database content, or uploaded assets, increment the version by `0.1` (`1.1`, `1.2`, `1.3`, ...).
 - Every future sync must record the version in this document before the final report. The record should include version, date, commit hash, GitHub push status, Tencent Cloud deployment status, local source dump path when data is restored, server pre-restore backup path when data is restored, core table counts, upload file counts, and HTTP/API health checks.
+
+Completed sync records:
+
+- Version `1.1`, 2026-05-28: commit `645dd34` pushed to GitHub `origin/main` via GitHub Desktop after local HTTPS/SSH CLI credentials were unavailable; Tencent Cloud `/home/ubuntu/Mnemonic` fast-forwarded to `645dd34`; `mnemonic.service` restarted and verified `active`; local preflight passed `npm run typecheck`, `git diff --check`, and `npm run build`; server passed `npm ci --no-audit --no-fund`, `npm run db:deploy` with no pending migrations, and `NODE_OPTIONS=--max_old_space_size=1536 npm run build`. Data restore was not performed because this was a code-only sync; local dump path and server pre-restore backup path are not applicable. Core table counts matched local/server: `Word=41794`, `MnemonicEntry=12817`, `MemoryNode=12911`, `MemoryLink=12270`, `User=7`, `ImportDraft=13469`. Upload file counts matched local/server: `public/uploads=757`. Health checks: homepage `http://124.221.123.13:3000/` returned `200 OK`; `/register` rendered only email, display-name, and password fields without username or verification-code fields; `/api/word-card/memory` returned real JSON.
 
 Fastest safe order:
 

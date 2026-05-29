@@ -9,6 +9,7 @@ import { nodeSlug, slugify } from "@/lib/slug";
 import { wordSchema } from "@/lib/validators";
 import { ensureWordNode } from "@/lib/wiki-links/resolve";
 import { vocabCategoryByTag } from "@/lib/vocab-categories";
+import { labelArtifactCleanupPackExcludeAction, labelArtifactCleanupScope } from "@/lib/repository-word-pack";
 
 export async function saveWordAction(formData: FormData) {
   const user = await requireRole(UserRole.EDITOR);
@@ -126,6 +127,40 @@ export async function bulkDeleteWordsFromRepositoryAction(formData: FormData) {
   redirect(withDeletedFlag(returnTo, deletedWords.length));
 }
 
+export async function removeWordFromRepositoryPackAction(formData: FormData) {
+  const user = await requireRole(UserRole.ADMIN);
+  const id = String(formData.get("id") ?? "");
+  const packScope = String(formData.get("packScope") ?? "");
+  const returnTo = repositoryReturnTarget(String(formData.get("returnTo") ?? ""));
+  if (packScope !== labelArtifactCleanupScope) redirect(returnTo);
+
+  const removedCount = await recordRepositoryPackExclusions({
+    actorId: user.id,
+    wordIds: [id],
+    packScope
+  });
+  revalidatePath("/repository");
+  redirect(withRemovedFromPackFlag(returnTo, removedCount));
+}
+
+export async function bulkRemoveWordsFromRepositoryPackAction(formData: FormData) {
+  const user = await requireRole(UserRole.ADMIN);
+  const packScope = String(formData.get("packScope") ?? "");
+  const returnTo = repositoryReturnTarget(String(formData.get("returnTo") ?? ""));
+  if (packScope !== labelArtifactCleanupScope) redirect(returnTo);
+
+  const ids = uniqueStrings(formData.getAll("wordId").map(String));
+  if (!ids.length) redirect(returnTo);
+
+  const removedCount = await recordRepositoryPackExclusions({
+    actorId: user.id,
+    wordIds: ids,
+    packScope
+  });
+  revalidatePath("/repository");
+  redirect(withRemovedFromPackFlag(returnTo, removedCount));
+}
+
 function repositoryReturnTarget(value: string) {
   if (!value || !value.startsWith("/repository") || value.startsWith("//")) return "/repository";
   return value;
@@ -140,8 +175,66 @@ function withDeletedFlag(path: string, count = 1) {
   return hash ? `${next}#${hash}` : next;
 }
 
+function withRemovedFromPackFlag(path: string, count = 1) {
+  const [pathnameAndQuery, hash = ""] = path.split("#", 2);
+  const [pathname, queryString = ""] = pathnameAndQuery.split("?", 2);
+  const query = new URLSearchParams(queryString);
+  query.set("removedFromPack", String(count));
+  const next = `${pathname}${query.size ? `?${query.toString()}` : ""}`;
+  return hash ? `${next}#${hash}` : next;
+}
+
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+async function recordRepositoryPackExclusions({
+  actorId,
+  wordIds,
+  packScope
+}: {
+  actorId: string;
+  wordIds: string[];
+  packScope: string;
+}) {
+  const ids = uniqueStrings(wordIds);
+  if (!ids.length) return 0;
+  const words = await prisma.word.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, word: true, slug: true }
+  });
+  if (!words.length) return 0;
+  const existingLogs = await prisma.auditLog.findMany({
+    where: {
+      action: labelArtifactCleanupPackExcludeAction,
+      entityType: "Word",
+      entityId: { in: words.map((word) => word.id) }
+    },
+    select: { entityId: true }
+  });
+  const existingWordIds = new Set(existingLogs.map((log) => log.entityId));
+  const wordsToExclude = words.filter((word) => !existingWordIds.has(word.id));
+  if (!wordsToExclude.length) return 0;
+
+  await prisma.$transaction(
+    wordsToExclude.map((word) =>
+      prisma.auditLog.create({
+        data: {
+          actorId,
+          action: labelArtifactCleanupPackExcludeAction,
+          entityType: "Word",
+          entityId: word.id,
+          metadataJson: {
+            packScope,
+            word: word.word,
+            slug: word.slug,
+            removedAt: new Date().toISOString()
+          }
+        }
+      })
+    )
+  );
+  return wordsToExclude.length;
 }
 
 async function deleteWordWithSnapshot(

@@ -1,25 +1,39 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { UserRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth/session";
+import { hasRole } from "@/lib/permissions";
+import { getAiExtensionCandidatesForBase } from "@/lib/ai-extension-route-fill";
 import { saveOfficialMnemonicAction } from "@/lib/services/mnemonic-service";
 import { WordForm, DeleteWordForm } from "@/components/word-form";
 import { MnemonicEditor } from "@/components/mnemonic-editor";
+import { AiExtensionCandidateChips } from "@/components/ai-extension-candidate-chips";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/status-badge";
 
 export default async function AdminWordEditor({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const word = await prisma.word.findUnique({
-    where: { id },
-    include: {
-      mnemonicEntries: { include: { author: true, reviewer: true, versions: { orderBy: { createdAt: "desc" } }, links: { include: { targetNode: true } } } },
-      bookmarks: true,
-      reviewCards: true
-    }
-  });
+  const [word, currentUser] = await Promise.all([
+    prisma.word.findUnique({
+      where: { id },
+      include: {
+        mnemonicEntries: { include: { author: true, reviewer: true, versions: { orderBy: { createdAt: "desc" } }, links: { include: { targetNode: true } } } },
+        bookmarks: true,
+        reviewCards: true
+      }
+    }),
+    getCurrentUser()
+  ]);
   if (!word) notFound();
   const official = word.mnemonicEntries.find((entry) => entry.sourceType === "OFFICIAL");
   const publicEntries = word.mnemonicEntries.filter((entry) => entry.sourceType === "USER_PUBLIC");
+  const aiExtensionCandidates =
+    hasRole(currentUser, UserRole.ADMIN) && official && official.status !== "ARCHIVED"
+      ? await getAiExtensionCandidatesForBase(word.id)
+      : [];
+  const aiExtensionReturnTo = "/repository?scope=aiExtensionReview#ai-extension-review";
+
   return (
     <main className="space-y-8">
       <div className="flex items-center justify-between">
@@ -29,7 +43,10 @@ export default async function AdminWordEditor({ params }: { params: Promise<{ id
       <WordForm word={word} />
       <Card>
         <CardHeader><CardTitle>官方助记编辑器</CardTitle></CardHeader>
-        <CardContent><MnemonicEditor action={saveOfficialMnemonicAction} targetWordId={word.id} mode="official" entry={official} /></CardContent>
+        <CardContent>
+          <MnemonicEditor action={saveOfficialMnemonicAction} targetWordId={word.id} mode="official" entry={official} />
+          <AiExtensionCandidateChips baseWordId={word.id} candidates={aiExtensionCandidates} returnTo={aiExtensionReturnTo} />
+        </CardContent>
       </Card>
       <section className="grid gap-6 lg:grid-cols-2">
         <Card>

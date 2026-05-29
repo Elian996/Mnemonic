@@ -54,6 +54,7 @@ export function RepositoryGlobalWordSearch({
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [loginPromptMessage, setLoginPromptMessage] = useState("");
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const wordCache = useRef(new Map<string, LevelWordItem>());
   const trimmedQuery = query.trim();
   const showLoginPrompt = (promptMessage = LOGIN_REQUIRED_INTERACTION_MESSAGE) => {
@@ -133,6 +134,20 @@ export function RepositoryGlobalWordSearch({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isResultsOpen]);
+
+  useEffect(() => {
+    const closeForMemoryCard = () => {
+      if (!document.documentElement.classList.contains("mn-memory-card-open")) return;
+      setIsResultsOpen(false);
+      const searchInput = searchInputRef.current;
+      if (searchInput && document.activeElement === searchInput) searchInput.blur();
+    };
+
+    closeForMemoryCard();
+    const observer = new MutationObserver(closeForMemoryCard);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
 
   const openWord = (word: LevelWordItem) => {
     const nextWord = isAuthenticated ? word : applyGuestProgressToWord(word);
@@ -263,6 +278,7 @@ export function RepositoryGlobalWordSearch({
           搜索全部单词
         </label>
         <input
+          ref={searchInputRef}
           id="repository-global-word-search"
           type="search"
           value={query}

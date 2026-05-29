@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { registerAction } from "@/lib/auth/actions";
+import { registerAction, requestRegisterCodeAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
 import { InteriorPage } from "@/components/interior-shell";
 
@@ -14,6 +14,7 @@ export default async function RegisterPage({
   if (user) redirect("/me");
   const errorMessage = registerErrorMessage(sp.error);
   const email = safeEmailParam(sp.email);
+  const successMessage = sp.error === "sent" ? "验证码已发送，请查看邮箱。" : "";
 
   return (
     <InteriorPage>
@@ -46,6 +47,25 @@ export default async function RegisterPage({
                 className="h-11 rounded-md border px-3 text-sm font-normal outline-none transition focus:border-[var(--mn-ink)]"
               />
             </label>
+            <button
+              type="submit"
+              formAction={requestRegisterCodeAction}
+              formNoValidate
+              className="h-11 rounded-md border border-[var(--mn-line)] bg-[var(--mn-paper-deep)] px-4 text-sm font-semibold text-[var(--mn-ink)] transition hover:border-[var(--mn-ink)]"
+            >
+              发送验证码
+            </button>
+            <label className="grid gap-2 text-sm font-semibold text-[var(--mn-ink)]">
+              验证码
+              <input
+                name="verificationCode"
+                inputMode="numeric"
+                pattern="[0-9]{6}"
+                placeholder="6 位验证码"
+                required
+                className="h-11 rounded-md border px-3 text-sm font-normal outline-none transition focus:border-[var(--mn-ink)]"
+              />
+            </label>
             <label className="grid gap-2 text-sm font-semibold text-[var(--mn-ink)]">
               昵称
               <input
@@ -66,6 +86,7 @@ export default async function RegisterPage({
                 className="h-11 rounded-md border px-3 text-sm font-normal outline-none transition focus:border-[var(--mn-ink)]"
               />
             </label>
+            {successMessage ? <p className="text-sm font-medium text-emerald-700">{successMessage}</p> : null}
             {errorMessage ? <p className="text-sm font-medium text-[var(--mn-red)]">{errorMessage}</p> : null}
             <button type="submit" className="h-11 rounded-md bg-[var(--mn-ink)] px-4 text-sm font-semibold text-[var(--mn-panel)] transition hover:opacity-90">
               注册
@@ -84,6 +105,11 @@ function safeEmailParam(value: string | undefined) {
 function registerErrorMessage(error: string | undefined) {
   if (error === "duplicate") return "这个邮箱已经被注册。";
   if (error === "invalid_email") return "请先填写有效邮箱。";
-  if (error === "invalid") return "请填写有效邮箱、昵称和至少 8 位密码。";
+  if (error === "invalid") return "请填写有效邮箱、6 位验证码、昵称和至少 8 位密码。";
+  if (error === "rate_limited") return "验证码发送太频繁，请稍后再试。";
+  if (error === "send_failed") return "验证码邮件暂时发送失败，请稍后再试。";
+  if (error === "code_expired") return "验证码已过期，请重新发送。";
+  if (error === "code_locked") return "验证码错误次数过多，请重新发送。";
+  if (error === "code_invalid") return "验证码不正确。";
   return "";
 }

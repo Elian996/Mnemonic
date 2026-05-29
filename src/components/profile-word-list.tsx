@@ -647,7 +647,7 @@ export function ProfileWordList({
             {emptyText}
           </div>
         ) : view === "grid" ? (
-          <div className="mn-profile-word-grid mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="mn-level-word-grid mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {sortedWords.map((word) => (
               <ProfileWordCard
                 key={word.id}
@@ -666,7 +666,7 @@ export function ProfileWordList({
             ))}
           </div>
         ) : (
-          <div className="mn-profile-word-row-list mt-5 overflow-hidden rounded-lg border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
+          <div className="mn-level-word-list mt-5 overflow-hidden rounded-lg border border-[#d8dde6] bg-white dark:border-border dark:bg-card">
             {sortedWords.map((word) => (
               <ProfileWordRow
                 key={word.id}
@@ -757,7 +757,7 @@ function ProfileWordCard({
         }
       }}
       className={cn(
-        "mn-profile-word-card group relative flex min-h-44 appearance-none flex-col justify-between rounded-lg border border-[#d8dde6] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#171a1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:border-border dark:bg-card dark:hover:border-foreground",
+        "mn-level-word-card group relative flex min-h-44 appearance-none flex-col justify-between rounded-lg border border-[#d8dde6] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#171a1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:border-border dark:bg-card dark:hover:border-foreground",
         isSelected &&
           "border-[#1a73e8] ring-2 ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
       )}
@@ -837,7 +837,7 @@ function ProfileWordRow({
         }
       }}
       className={cn(
-        "mn-profile-word-row grid min-h-16 w-full appearance-none gap-3 border-b border-[#e5e9f0] px-4 py-3 text-left transition last:border-b-0 hover:bg-[#f6f8fb] focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1a73e8] dark:border-border dark:hover:bg-muted sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-center",
+        "mn-level-word-row grid min-h-16 w-full appearance-none gap-3 border-b border-[#e5e9f0] px-4 py-3 text-left transition last:border-b-0 hover:bg-[#f6f8fb] focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1a73e8] dark:border-border dark:hover:bg-muted sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-center",
         isSelected &&
           "border-[#1a73e8] ring-2 ring-inset ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
       )}
@@ -904,7 +904,7 @@ function ProfileMarkButtons({
   ];
 
   return (
-    <div className={cn("mn-profile-mark-buttons flex items-center gap-2", className)}>
+    <div className={cn("mn-level-mark-buttons flex items-center gap-2", className)}>
       {buttons.map((button) => {
         const Icon = button.icon;
         const active = markState === button.state;

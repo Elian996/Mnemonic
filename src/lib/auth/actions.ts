@@ -32,7 +32,8 @@ export async function registerAction(formData: FormData) {
   const parsed = registerSchema.safeParse({
     email: normalizeEmail(formData.get("email")),
     displayName: normalizeText(formData.get("displayName")),
-    password: formData.get("password")
+    password: formData.get("password"),
+    verificationCode: normalizeText(formData.get("verificationCode"))
   });
   if (!parsed.success) redirect("/register?error=invalid");
 
@@ -41,6 +42,15 @@ export async function registerAction(formData: FormData) {
     select: { id: true }
   });
   if (existingEmail) redirect(registerUrl("duplicate", parsed.data.email));
+
+  const verificationResult = await consumeEmailVerificationCode({
+    email: parsed.data.email,
+    purpose: "REGISTER",
+    code: parsed.data.verificationCode
+  });
+  if (verificationResult !== "valid") {
+    redirect(registerUrl(verificationErrorParam(verificationResult), parsed.data.email));
+  }
 
   let user;
   try {
@@ -62,6 +72,28 @@ export async function registerAction(formData: FormData) {
 
   await createSession(user.id);
   redirect("/me");
+}
+
+export async function requestRegisterCodeAction(formData: FormData) {
+  const parsed = emailVerificationRequestSchema.safeParse({
+    email: normalizeEmail(formData.get("email"))
+  });
+  if (!parsed.success) redirect("/register?error=invalid_email");
+
+  const existingEmail = await prisma.user.findUnique({
+    where: { email: parsed.data.email },
+    select: { id: true }
+  });
+  if (existingEmail) redirect(registerUrl("duplicate", parsed.data.email));
+
+  const result = await requestEmailVerificationCode({
+    email: parsed.data.email,
+    purpose: "REGISTER",
+    ip: await requestIp()
+  });
+  if (result === "rate_limited") redirect(registerUrl("rate_limited", parsed.data.email));
+  if (result === "send_failed") redirect(registerUrl("send_failed", parsed.data.email));
+  redirect(registerUrl("sent", parsed.data.email));
 }
 
 export async function requestPasswordResetCodeAction(formData: FormData) {

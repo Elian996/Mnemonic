@@ -7,7 +7,8 @@ export const loginSchema = z.object({
 });
 
 export const registerSchema = loginSchema.extend({
-  displayName: z.string().min(2).max(40)
+  displayName: z.string().min(2).max(40),
+  verificationCode: z.string().regex(/^\d{6}$/)
 });
 
 export const emailVerificationRequestSchema = z.object({

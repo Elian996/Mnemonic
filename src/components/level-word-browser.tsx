@@ -12,7 +12,6 @@ import {
   EyeOff,
   Grid2X2,
   ImagePlus,
-  Link2,
   List,
   Loader2,
   Pencil,
@@ -31,8 +30,8 @@ import {
   LOGIN_REQUIRED_INTERACTION_MESSAGE,
   LoginRequiredPrompt
 } from "@/components/login-required-prompt";
-import { MarkdownImageTextarea } from "@/components/markdown-image-textarea";
-import { WikiRichText } from "@/components/wiki-rich-text";
+import { EditSaveStatus, MemoryCardEditFields } from "@/components/memory-card-edit-fields";
+import { MemoryCardReadView } from "@/components/memory-card-read-view";
 import {
   GUEST_PROGRESS_CHANGED_EVENT,
   applyGuestProgressToWord,
@@ -49,6 +48,11 @@ import {
   type WordMarkSaveStateDetail,
   type WordMarkSaveStatus
 } from "@/lib/word-mark-save-events";
+import {
+  editableMnemonicContentFromParts,
+  relatedWordText,
+  withRelatedWordLinks
+} from "@/lib/mnemonic-card-editing";
 
 type MnemonicCardItem = {
   id: string;
@@ -1827,6 +1831,7 @@ export function MemoryCardTray({
   defaultUserCardVisibility = "private",
   canEditOfficialCards = false,
   canExportMemoryCardImages = false,
+  overlayClassName,
   onRequireLogin
 }: {
   words: LevelWordItem[];
@@ -1843,6 +1848,7 @@ export function MemoryCardTray({
   defaultUserCardVisibility?: "private" | "public";
   canEditOfficialCards?: boolean;
   canExportMemoryCardImages?: boolean;
+  overlayClassName?: string;
   onRequireLogin?: (message?: string) => void;
 }) {
   const scrollLockRef = useRef<DocumentScrollLock | null>(null);
@@ -1942,7 +1948,10 @@ export function MemoryCardTray({
   }, [activeCardId]);
 
   const tray = (
-    <div className="pointer-events-auto fixed inset-0 z-50" onKeyDownCapture={handleTrayKeyDown}>
+    <div
+      className={cn("pointer-events-auto fixed inset-0 z-50", overlayClassName)}
+      onKeyDownCapture={handleTrayKeyDown}
+    >
       <div className="mn-memory-card-backdrop absolute inset-0 bg-[#171a1f]/10 backdrop-blur-[1px] dark:bg-black/35" />
       <div className="absolute inset-0">
         {words.map((word, index) => (
@@ -3159,59 +3168,49 @@ function MemoryCard({
           )}
         </section>
 
-        <section className="mt-4 border-t border-[#eef2f6] pt-4 dark:border-border">
-          <div className="text-xs font-semibold tracking-normal text-[#8b93a1] dark:text-muted-foreground">
-            记忆卡
-          </div>
-          {isEditing ? (
-            <div className="mt-3 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-lg font-semibold text-[#171a1f] dark:text-foreground">
-                  {editingMnemonicId ? "编辑记忆卡" : "新记忆卡"}
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => imageInputRef.current?.click()}
-                  disabled={isSavingCard || isUploadingImage}
-                  aria-label="插入图片"
-                  title="插入图片"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[#d8dde6] text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] disabled:pointer-events-none disabled:opacity-50 dark:border-border dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
-                >
-                  {isUploadingImage ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <ImagePlus className="h-4 w-4" />
-                  )}
-                </button>
-                <input
-                  ref={imageInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) void uploadDraftImage(file);
-                  }}
-                />
-              </div>
-              <MarkdownImageTextarea
+          <section className="mt-4 border-t border-[#eef2f6] pt-4 dark:border-border">
+            <div className="text-xs font-semibold tracking-normal text-[#8b93a1] dark:text-muted-foreground">
+              记忆卡
+            </div>
+            {isEditing ? (
+              <MemoryCardEditFields
+                title={editingMnemonicId ? "编辑记忆卡" : "新记忆卡"}
                 value={draftContent}
                 onValueChange={setDraftContent}
-                className="min-h-72 resize-y rounded-lg border-[#d8dde6] bg-white p-4 font-sans text-base leading-7 tracking-normal text-[#171a1f] shadow-none dark:border-border dark:bg-card dark:text-foreground"
-                statusClassName="text-[#69717f] dark:text-muted-foreground"
                 placeholder={defaultCustomCardTemplate(word.word)}
-              />
-              <label className="flex h-11 items-center gap-2 rounded-lg border border-[#d8dde6] bg-white px-3 text-[#69717f] focus-within:border-[#171a1f] dark:border-border dark:bg-card dark:text-muted-foreground dark:focus-within:border-foreground">
-                <Link2 className="h-4 w-4 shrink-0" />
-                <input
-                  type="text"
-                  value={relatedWords}
-                  onChange={(event) => setRelatedWords(event.target.value)}
-                  className="h-full min-w-0 flex-1 bg-transparent font-sans text-sm tracking-normal text-[#171a1f] outline-none placeholder:text-[#8b93a1] dark:text-foreground dark:placeholder:text-muted-foreground"
-                  placeholder="相关单词：house, emotion"
-                />
-              </label>
-              <EditSaveStatus label={autoSaveLabel} />
+                relatedWords={relatedWords}
+                onRelatedWordsChange={setRelatedWords}
+                statusLabel={autoSaveLabel}
+                message={editorMessage}
+                actionSlot={
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => imageInputRef.current?.click()}
+                      disabled={isSavingCard || isUploadingImage}
+                      aria-label="插入图片"
+                      title="插入图片"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[#d8dde6] text-[#69717f] transition hover:border-[#171a1f] hover:text-[#171a1f] disabled:pointer-events-none disabled:opacity-50 dark:border-border dark:text-muted-foreground dark:hover:border-foreground dark:hover:text-foreground"
+                    >
+                      {isUploadingImage ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ImagePlus className="h-4 w-4" />
+                      )}
+                    </button>
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void uploadDraftImage(file);
+                      }}
+                    />
+                  </>
+                }
+              >
               {showDraftVisibilityChoice ? (
                 <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#d8dde6] bg-white px-3 py-2 text-sm font-semibold text-[#171a1f] dark:border-border dark:bg-card dark:text-foreground">
                   <span className="text-[#69717f] dark:text-muted-foreground">保存为</span>
@@ -3235,89 +3234,66 @@ function MemoryCard({
                   </label>
                 </div>
               ) : null}
-              {editorMessage ? (
-                <p
-                  className="text-xs leading-5 text-[#69717f] dark:text-muted-foreground"
-                  data-memory-card-export-hidden="true"
-                >
-                  {editorMessage}
-                </p>
-              ) : null}
-            </div>
-          ) : activeMnemonic ? (
-            <>
-              <h3 className="memory-card-heading mt-2 font-semibold text-[#171a1f] dark:text-foreground">
-                {activeMnemonic.title}
-              </h3>
-              {activeMnemonic.splitText ? (
-                <div className="memory-card-note memory-card-split mt-3 rounded-md px-3 py-2 font-medium text-[#323741] dark:text-foreground/85">
-                  {activeMnemonic.splitText}
-                </div>
-              ) : null}
-              <div
-                className="memory-card-readable mt-3 text-[#323741] dark:text-foreground/85"
-                onClick={handleMnemonicClick}
-              >
-                <WikiRichText html={activeMnemonic.contentHtml} />
-              </div>
-              {activeMnemonicIsPublic ? (
-                <div
-                  className="mt-4 flex flex-wrap items-center gap-2"
-                  data-memory-card-export-hidden="true"
-                >
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void reactToActiveMnemonic("LIKE");
-                    }}
-                    disabled={reactingCardId === activeMnemonic.id}
-                    aria-pressed={activeMnemonic.userVoteType === "LIKE"}
-                    title="赞同并收藏这张记忆卡"
-                    className={cn(
-                      "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-60",
-                      activeMnemonic.userVoteType === "LIKE"
-                        ? "border-[#168458] bg-[#effaf3] text-[#168458] dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300"
-                        : "border-[#d8dde6] text-[#69717f] hover:border-[#168458] hover:text-[#168458] dark:border-border dark:text-muted-foreground"
-                    )}
+              </MemoryCardEditFields>
+            ) : activeMnemonic ? (
+            <MemoryCardReadView
+              title={activeMnemonic.title}
+              splitText={activeMnemonic.splitText}
+              html={activeMnemonic.contentHtml}
+              onContentClick={handleMnemonicClick}
+              message={editorMessage}
+              footerSlot={
+                activeMnemonicIsPublic ? (
+                  <div
+                    className="mt-4 flex flex-wrap items-center gap-2"
+                    data-memory-card-export-hidden="true"
                   >
-                    {reactingCardId === activeMnemonic.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <ThumbsUp className="h-4 w-4" />
-                    )}
-                    {activeMnemonic.likeCount.toLocaleString("zh-CN")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void reactToActiveMnemonic("DISLIKE");
-                    }}
-                    disabled={reactingCardId === activeMnemonic.id}
-                    aria-pressed={activeMnemonic.userVoteType === "DISLIKE"}
-                    title="不推荐这张记忆卡"
-                    className={cn(
-                      "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-60",
-                      activeMnemonic.userVoteType === "DISLIKE"
-                        ? "border-[#c2412d] bg-[#fff1ee] text-[#c2412d] dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
-                        : "border-[#d8dde6] text-[#69717f] hover:border-[#c2412d] hover:text-[#c2412d] dark:border-border dark:text-muted-foreground"
-                    )}
-                  >
-                    <ThumbsDown className="h-4 w-4" />
-                    {activeMnemonic.dislikeCount.toLocaleString("zh-CN")}
-                  </button>
-                </div>
-              ) : null}
-              {editorMessage ? (
-                <p
-                  className="mt-3 text-xs leading-5 text-[#69717f] dark:text-muted-foreground"
-                  data-memory-card-export-hidden="true"
-                >
-                  {editorMessage}
-                </p>
-              ) : null}
-            </>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void reactToActiveMnemonic("LIKE");
+                      }}
+                      disabled={reactingCardId === activeMnemonic.id}
+                      aria-pressed={activeMnemonic.userVoteType === "LIKE"}
+                      title="赞同并收藏这张记忆卡"
+                      className={cn(
+                        "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-60",
+                        activeMnemonic.userVoteType === "LIKE"
+                          ? "border-[#168458] bg-[#effaf3] text-[#168458] dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300"
+                          : "border-[#d8dde6] text-[#69717f] hover:border-[#168458] hover:text-[#168458] dark:border-border dark:text-muted-foreground"
+                      )}
+                    >
+                      {reactingCardId === activeMnemonic.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ThumbsUp className="h-4 w-4" />
+                      )}
+                      {activeMnemonic.likeCount.toLocaleString("zh-CN")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void reactToActiveMnemonic("DISLIKE");
+                      }}
+                      disabled={reactingCardId === activeMnemonic.id}
+                      aria-pressed={activeMnemonic.userVoteType === "DISLIKE"}
+                      title="不推荐这张记忆卡"
+                      className={cn(
+                        "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-60",
+                        activeMnemonic.userVoteType === "DISLIKE"
+                          ? "border-[#c2412d] bg-[#fff1ee] text-[#c2412d] dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+                          : "border-[#d8dde6] text-[#69717f] hover:border-[#c2412d] hover:text-[#c2412d] dark:border-border dark:text-muted-foreground"
+                      )}
+                    >
+                      <ThumbsDown className="h-4 w-4" />
+                      {activeMnemonic.dislikeCount.toLocaleString("zh-CN")}
+                    </button>
+                  </div>
+                ) : null
+              }
+            />
           ) : (
             <p className="mt-3 rounded-md border border-dashed border-[#cbd3df] px-3 py-8 text-center text-sm text-[#69717f] dark:border-border dark:text-muted-foreground">
               暂无助记卡。
@@ -3342,17 +3318,6 @@ function MemoryCard({
         ) : null}
       </div>
     </article>
-  );
-}
-
-function EditSaveStatus({ label }: { label: string }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-[#69717f] dark:text-muted-foreground">
-      <span className="rounded-full border border-[#d8dde6] px-2 py-1 dark:border-border">
-        手动保存
-      </span>
-      <span>{label}</span>
-    </div>
   );
 }
 
@@ -3809,58 +3774,8 @@ async function mutateMnemonicCard(slug: string, payload: Record<string, string>)
   return result as MnemonicCardMutationResult;
 }
 
-function withRelatedWordLinks(content: string, relatedWords: string) {
-  const words = relatedWords
-    .split(/[,，\s]+/)
-    .map((word) => normalizeRelatedWord(word))
-    .filter(Boolean);
-  const cleanContent = stripRelatedWordBlock(content);
-  if (!words.length) return cleanContent;
-
-  const linkBlock = [
-    "",
-    "相关单词：",
-    ...Array.from(new Set(words)).map((word) => `[[word:${word}]]`)
-  ].join("\n");
-  return `${cleanContent.trimEnd()}\n${linkBlock}`;
-}
-
 function editableMnemonicContent(card: MnemonicCardItem) {
-  const content = stripRelatedWordBlock(card.contentMarkdown).trim();
-  if (hasSplitLine(content)) return content;
-  const splitLine = `划分：${card.splitText.trim() ? ` ${card.splitText.trim()}` : ""}`;
-  return [splitLine, content].filter(Boolean).join("\n\n").trim();
-}
-
-function relatedWordText(markdown: string) {
-  return Array.from(
-    new Set(
-      Array.from(markdown.matchAll(/\[\[\s*word\s*:\s*([^|\]\s]+)(?:\|[^\]]+)?\]\]/giu))
-        .map((match) =>
-          String(match[1] ?? "")
-            .trim()
-            .toLowerCase()
-        )
-        .filter(Boolean)
-    )
-  ).join(", ");
-}
-
-function normalizeRelatedWord(word: string) {
-  return word
-    .trim()
-    .replace(/^\[\[\s*word\s*:\s*/iu, "")
-    .replace(/\]\]$/u, "")
-    .trim()
-    .toLowerCase();
-}
-
-function stripRelatedWordBlock(markdown: string) {
-  return markdown.replace(/\n*相关单词[:：][\s\S]*$/u, "").trimEnd();
-}
-
-function hasSplitLine(markdown: string) {
-  return /^\s*划分\s*[:：]/mu.test(markdown);
+  return editableMnemonicContentFromParts(card.contentMarkdown, card.splitText);
 }
 
 function isPubliclyReactableMnemonic(card: MnemonicCardItem) {

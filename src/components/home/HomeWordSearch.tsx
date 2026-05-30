@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { MiniWordGraph } from "@/components/home/MiniWordGraph";
 import { MemoryCardTray, type LevelWordItem } from "@/components/level-word-browser";
@@ -287,7 +287,7 @@ export function HomeWordSearch({
           }}
         >
           <span className="mn-search-icon" aria-hidden="true">
-            {status === "loading" ? <Loader2 className="mn-search-loading" /> : <Search />}
+            {status === "loading" ? <span className="mn-search-loading" /> : <Search />}
           </span>
           <input
             value={query}
@@ -328,7 +328,7 @@ export function HomeWordSearch({
                       <span className="mn-search-result-main">
                         <span className="mn-search-result-word">{word.word}</span>
                         {word.phonetic ? <span className="mn-search-result-phonetic">{word.phonetic}</span> : null}
-                        {isOpening ? <Loader2 className="mn-search-result-loading" aria-hidden="true" /> : null}
+                        {isOpening ? <span className="mn-search-result-loading" aria-hidden="true" /> : null}
                       </span>
                       <span className="mn-search-result-meaning">
                         {word.shortMeaningCn || word.meaningCn || "释义待补"}

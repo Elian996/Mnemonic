@@ -628,19 +628,64 @@ rsync -av --ignore-existing \
 ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 'sudo systemctl restart mnemonic'
 ```
 
-## Fast Local-Source Sync SOP
+## Production Sync SOP
 
-Use this path when the user asks to synchronize "以本地为准", "最新数据和改动", "同步到 GitHub 和腾讯云", or similar. This is a full local-source sync across GitHub, local data, and the production server; it covers code, PostgreSQL data, and uploaded image files. Do not put `.env`, private keys, database passwords, dump files, `backups/`, or `public/uploads/` into Git.
+After the public server has real users, the production server `B` is the source of truth for all production data. This includes accounts, learning marks, review progress, uploads, import/review drafts, and every word-card or mnemonic-card content change. The local workspace `A` is the source of truth only for code, migrations, and reviewed maintenance scripts, not for production database rows.
+
+Default interpretation:
+
+- If `A` changed code, deploy code only: GitHub -> server `git pull --ff-only`, `npm ci`, `npm run db:deploy`, build, restart, verify.
+- If `prisma/schema.prisma` changed, ship it through Prisma migrations with `npm run db:deploy`; do not copy a local database over production merely because schema changed.
+- Word-card changes are data, not code. This includes `Word`, `MnemonicEntry`, `ImportDraft`, card Markdown/HTML/plain text, split text, status, review decisions, official/user card edits, and related card metadata. After production has users, word-card content is server-authoritative by default.
+- If a word-card/content repair is developed locally, do not publish it by restoring the local database over production. Convert it into a narrow reviewed data patch/migration or perform it through the production/admin workflow after backup and verification.
+- If production users may have created accounts, marks, review progress, cards, votes, uploads, or drafts, never restore an `A` database dump over `B` unless the user explicitly says the production data may be overwritten for disaster recovery.
+- The phrases "以本地为准", "最新数据和改动", or "同步到 GitHub 和腾讯云" are ambiguous after public usage begins. First classify the scope as docs-only, code-only, schema-migration, uploads-additive, production-to-local refresh, or explicit local-over-production restore. If the user only says code changed, treat it as code-only.
+- `public/uploads/` is production data when users can upload or when production DB rows reference those files. Do not run `rsync --delete` from local to production unless this is an explicit local-over-production restore and a server backup already exists.
+- Do not put `.env`, private keys, database passwords, dump files, `backups/`, or `public/uploads/` into Git.
+
+Full local-source sync is no longer the normal deployment path. It is an exceptional recovery/import path for cases where the user explicitly chooses local `A` as the authoritative data source after reviewing what production `B` will lose.
+
+### Divergent A/B Data Merge
+
+If local `A` and production `B` both have data the other side lacks, treat the task as a database merge, not a sync. Do not choose either database as a whole-database winner.
+
+Safe merge rule:
+
+- Use production `B` as the base because it may contain live user data.
+- Back up both sides first, and restore a fresh `B` dump into a local temporary database for rehearsal before touching production.
+- Insert A-only rows into B only when their foreign-key dependencies exist or are inserted in the same merge. Typical appendable rows include A-only official `MnemonicEntry` rows, `MnemonicEntryVersion`, `MemoryNode`, `MemoryLink`, `ImportDraft`, `AuditLog`, and missing low-risk user rows such as bookmarks/marks when there is no logical-key conflict.
+- Same-ID or same-logical-key conflicts are not ordinary inserts. For word/card/admin content (`Word`, `MnemonicEntry`, `ImportDraft`), a one-time reconciliation may apply the newer A version only when A's `updatedAt` is newer than B's and B has not changed since the audit snapshot; B-newer rows must remain B's version. Do not overwrite B's user interaction counters such as likes, dislikes, bookmarks, reports, views, or effectiveness scores with A values.
+- For live user state such as `WordMark`, `Bookmark`, `ReviewCard`, `ReviewLog`, votes, reports, and notifications, prefer union/insert-missing. If the same logical user item differs on both sides, keep B unless the user explicitly chooses a latest-write-wins policy for that field.
+- Upload files must be unioned without deletion. Use additive transfer (`--ignore-existing` or equivalent) unless making a separately confirmed exact mirror. Never use local `rsync --delete` against production uploads during a merge.
+- Actual production apply should run in a short maintenance window or with the service stopped, take a fresh B backup immediately before applying, and use guarded updates so rows changed on B after the audit are skipped rather than overwritten.
+- After applying, verify row counts, orphan checks for links/versions, representative word-card APIs, uploaded assets, service health, and record the merge report paths in this document.
+
+2026-05-30 merge audit state:
+
+- Local A backup: `backups/db-dumps/local-before-merge-audit-20260530-182721.dump`.
+- Production B snapshot copied locally: `backups/db-dumps/server-source-for-merge-audit-20260530-182721.dump`.
+- Local temporary B snapshot database: `mnemonic_prod_snapshot_20260530_182721`.
+- Audit report: `tmp/ab-merge-audit/audit-2026-05-30T10-29-50-262Z.json`.
+- Initial differences: A-only `MnemonicEntry=1072`, B-only `MnemonicEntry=4`, A-only `ImportDraft=1363`, A-only `MemoryNode=1048`, B-only `MemoryNode=2`, A-only `MemoryLink=1074`, B-only `MemoryLink=13`, A-only `WordMark=3`, B-only `WordMark=21`, A-only `Bookmark=7`, B-only `Bookmark=18`.
+- Same-ID content conflicts before reconciliation: `MnemonicEntry=5226` changed, with `A_newer=5215` and `B_newer=11`; `Word=1067` changed, with `A_newer=1063` and `B_newer=4`. These must be handled by guarded update rules, not blind overwrite.
+- Local rehearsal on the B snapshot successfully inserted A-only rows without orphan links/versions: `MnemonicEntry=1072`, `MnemonicEntryVersion=5503`, `MemoryNode=1048`, `MemoryLink=1074`, `ImportDraft=1363`, `AuditLog=2659`, `Bookmark=7`, `WordMark=3`.
+- Local rehearsal then applied A-newer guarded content updates on the temporary B snapshot: `MnemonicEntry=5329`, `Word=1069`, `ImportDraft=1556`, `WordMark=1`. Final temporary merged counts were `Word=41794`, `MnemonicEntry=13893`, `MnemonicEntryVersion=24191`, `MemoryNode=13961`, `MemoryLink=13344`, `ImportDraft=14832`, `Bookmark=488`, `WordMark=1163`, `AuditLog=32144`, with `orphan_memory_links=0` and `orphan_versions=0`.
+- Production apply completed on 2026-05-30 after user confirmation. Fresh server backup: `/home/ubuntu/Mnemonic/backups/db-dumps/server-before-ab-merge-20260530-184338.dump`. A source dump uploaded to server: `/home/ubuntu/Mnemonic/backups/db-dumps/local-a-source-for-ab-merge-20260530-182721.dump`. Temporary server database `mnemonic_local_a_merge_20260530_182721` was restored from A, used through `postgres_fdw`, then dropped after verification; production FDW schema/server were also dropped after apply.
+- Production merge inserted A-only rows: `MnemonicEntry=1072`, `MnemonicEntryVersion=5503`, `MemoryNode=1048`, `MemoryLink=1074`, `ImportDraft=1363`, `AuditLog=2659`, `WordMark=3`, `Bookmark=6` (`1` A-only bookmark was skipped by logical-key duplicate guard). It applied A-newer content updates: `MnemonicEntry=5329`, `Word=1069`, `ImportDraft=1556`. Existing `WordMark` rows were not updated because live user state stays B-authoritative.
+- Production final counts after merge: `Word=41794`, `MnemonicEntry=13893`, `MnemonicEntryVersion=24191`, `MemoryNode=13961`, `MemoryLink=13344`, `ImportDraft=14832`, `Bookmark=487`, `WordMark=1163`, `AuditLog=32145`. Orphan checks passed: `orphan_memory_links=0`, `orphan_versions=0`. Uploads were unioned with `rsync --ignore-existing`, transferring `30` files; server `public/uploads` became `1554` files / `1.4G`.
+- Production health checks passed after merge: `mnemonic.service` active, `http://mnemonic.top/` and `http://www.mnemonic.top/` returned `200 OK`, `/api/word-card/tile` returned the A-only merged card, `/api/word-card/bilateral` returned the B-only preserved card, and `AB_DATA_MERGE_APPLY` exists once in `AuditLog`.
+- After production merge, local A was refreshed from merged production B so A and B are aligned again. Server post-merge dump: `/home/ubuntu/Mnemonic/backups/db-dumps/server-after-ab-merge-20260530-184720.dump`, copied locally to `backups/db-dumps/server-after-ab-merge-20260530-184720.dump`. Local pre-refresh backup: `backups/db-dumps/local-before-post-merge-refresh-20260530-184720.dump`. Local uploads were refreshed additively from B, transferring `10` files; local `public/uploads` became `1554` files. Local DB verification after refresh matched production key counts and passed `orphan_memory_links=0`, `orphan_versions=0`.
 
 Mandatory sync-method iteration rule:
 
 - Every time code, database data, uploaded assets, or any combination of them is synchronized between local, GitHub, and Tencent Cloud, first review the previous sync records and current bottlenecks, then choose the fastest safe path for the actual change scope. Do not blindly run the full local-source sync if a narrower code-only, docs-only, uploads-only, or data-only path is sufficient and safer.
+- When production may contain newer user data than local, prefer `B -> A` for data refreshes and `A -> B` only for code/migrations. This keeps local useful for debugging without risking production records.
 - During and after every sync, identify at least one concrete opportunity to make future syncs faster, safer, simpler, or more verifiable. If the current SOP already looks optimal, explicitly record that no better path was found and why.
 - Before the final report for any sync, update this AI document with the chosen path, what was faster or safer than the previous approach, any new reusable command/path/check discovered, and any remaining bottleneck. Treat this AI-doc update as a required sync step, not optional documentation work.
 
 Production version policy:
 
-- Current public production version is `1.3`, set by the completed 2026-05-29 code-only Tencent email verification sync.
+- Current public production version is `1.4`, set by the completed 2026-05-30 A/B production data merge.
 - For every future upload/sync/deploy that changes production code, database content, or uploaded assets, increment the version by `0.1` (`1.1`, `1.2`, `1.3`, ...).
 - Every future sync must record the version in this document before the final report. The record should include version, date, commit hash, GitHub push status, Tencent Cloud deployment status, local source dump path when data is restored, server pre-restore backup path when data is restored, core table counts, upload file counts, and HTTP/API health checks.
 
@@ -649,22 +694,24 @@ Completed sync records:
 - Version `1.1`, 2026-05-28: commit `645dd34` pushed to GitHub `origin/main` via GitHub Desktop after local HTTPS/SSH CLI credentials were unavailable; Tencent Cloud `/home/ubuntu/Mnemonic` fast-forwarded to `645dd34`; `mnemonic.service` restarted and verified `active`; local preflight passed `npm run typecheck`, `git diff --check`, and `npm run build`; server passed `npm ci --no-audit --no-fund`, `npm run db:deploy` with no pending migrations, and `NODE_OPTIONS=--max_old_space_size=1536 npm run build`. Data restore was not performed because this was a code-only sync; local dump path and server pre-restore backup path are not applicable. Core table counts matched local/server: `Word=41794`, `MnemonicEntry=12817`, `MemoryNode=12911`, `MemoryLink=12270`, `User=7`, `ImportDraft=13469`. Upload file counts matched local/server: `public/uploads=757`. Health checks: homepage `http://124.221.123.13:3000/` returned `200 OK`; `/register` rendered only email, display-name, and password fields without username or verification-code fields; `/api/word-card/memory` returned real JSON.
 - Version `1.2`, 2026-05-28: commit `8537bd7` pushed to GitHub `origin/main` via GitHub Desktop after CLI HTTPS credentials were still unavailable; Tencent Cloud `/home/ubuntu/Mnemonic` fast-forwarded to `8537bd7`; `mnemonic.service` and `nginx` verified `active`; local preflight passed `npm run typecheck`, `git diff --check`, `npm run build`, `npm run images:optimize`, and a renderer check that rewrote the porcelain card image to `.display.webp` while keeping `data-original-src`; server passed `npm ci --no-audit --no-fund`, `npm run db:deploy` with no pending migrations, `npm run images:optimize`, and `NODE_OPTIONS=--max_old_space_size=1536 npm run build`. Data restore was not performed because database content was unchanged; local dump path and server pre-restore backup path are not applicable. Server generated `757` WebP display variants; `public/uploads` file count became `1514` total files with `757` `.display.webp` files. Core table counts matched local/server: `Word=41794`, `MnemonicEntry=12817`, `MemoryNode=12911`, `MemoryLink=12270`, `User=7`, `ImportDraft=13469`. Health checks: homepage `http://124.221.123.13/` returned `200 OK`; `/api/word-card/porcelain` returned HTML using `/uploads/generated-mnemonic-images/porcelain-cmp6sr4g-1779620995052.display.webp` and kept the original PNG in `data-original-src`; the WebP response returned `200 OK`, `Content-Type: image/webp`, `Content-Length: 37762`, and one-year cache headers through Nginx. Nginx backup path: `/etc/nginx/backups/mnemonic-memory.bak-20260528-104201`.
 - Version `1.3`, 2026-05-29: code commit `0c6d128` was pushed to GitHub `origin/main` via GitHub Desktop after CLI HTTPS credentials still failed with `could not read Username for 'https://github.com': Device not configured`; Tencent Cloud `/home/ubuntu/Mnemonic` fast-forwarded to `0c6d128`; `mnemonic.service` restarted and verified `active`. Local preflight passed `git diff --check`, `npm run typecheck -- --pretty false`, and `npm run build`. Server passed `npm ci --no-audit --no-fund`, `npm run db:deploy` with no pending migrations, and `NODE_OPTIONS=--max_old_space_size=1536 npm run build`. Data restore and upload sync were not performed because this was a code-only sync; local dump path and server pre-restore backup path are not applicable. Server `.env` was backed up to `.env.bak-email-sync-20260529-190928`, and non-secret Tencent SES values were set: provider `tencent-ses`, `EMAIL_MOCK=false`, region `ap-hongkong`, sender `noreply@mail.mnemonic.top`, and template `181063`; `TENCENTCLOUD_SECRET_ID` and `TENCENTCLOUD_SECRET_KEY` remain unset until the user explicitly approves creating or entering API credentials. Core table counts on the server remained `Word=41794`, `MnemonicEntry=12817`, `MemoryNode=12911`, `MemoryLink=12270`, `User=7`, `ImportDraft=13469`; upload file count remained `public/uploads=1514`. Health checks: `http://124.221.123.13:3000/`, `http://mnemonic.top/`, and `http://www.mnemonic.top/` returned `200 OK`; `/register` rendered `发送验证码` and `6 位验证码`; `/api/word-card/memory` returned real JSON.
+- Version `1.4`, 2026-05-30: no code commit or GitHub push was required; this was a production data/assets merge after A and B diverged. Production B was backed up to `/home/ubuntu/Mnemonic/backups/db-dumps/server-before-ab-merge-20260530-184338.dump`; local A source dump `/home/ubuntu/Mnemonic/backups/db-dumps/local-a-source-for-ab-merge-20260530-182721.dump` was restored on the server into a temporary database, merged into B through guarded SQL, then the temporary database and FDW objects were removed. Inserted A-only rows: `MnemonicEntry=1072`, `MnemonicEntryVersion=5503`, `MemoryNode=1048`, `MemoryLink=1074`, `ImportDraft=1363`, `AuditLog=2659`, `WordMark=3`, `Bookmark=6`. Updated A-newer content rows: `MnemonicEntry=5329`, `Word=1069`, `ImportDraft=1556`; existing live user marks stayed B-authoritative. Uploads were unioned with `rsync --ignore-existing`, transferring `30` files. Final production counts: `Word=41794`, `MnemonicEntry=13893`, `MnemonicEntryVersion=24191`, `MemoryNode=13961`, `MemoryLink=13344`, `ImportDraft=14832`, `Bookmark=487`, `WordMark=1163`, `AuditLog=32145`, `public/uploads=1554` files / `1.4G`. Health checks: `mnemonic.service` active; `http://mnemonic.top/`, `http://www.mnemonic.top/`, `/api/word-card/tile`, and `/api/word-card/bilateral` returned `200 OK`; orphan checks returned `orphan_memory_links=0` and `orphan_versions=0`. After production merge, local A was refreshed from B using `/home/ubuntu/Mnemonic/backups/db-dumps/server-after-ab-merge-20260530-184720.dump`; local pre-refresh backup is `backups/db-dumps/local-before-post-merge-refresh-20260530-184720.dump`, and local uploads were refreshed additively to `1554` files.
 
 Sync-method iteration records:
 
 - Version `1.1`, 2026-05-28 improvement: classify the sync by changed surfaces before running it. For this sync, the faster safe path was `code-only` for the app change and `docs-only fast-forward` for the later AI_CONTEXT record, so future similar syncs should skip database dump/restore and `public/uploads` rsync unless schema/data/assets actually changed. Reusable check: after code-only deploy, still compare core table counts and upload counts once as a guardrail, but do not create/restore dumps. Reusable GitHub fallback: if CLI push fails with local HTTPS/SSH credential issues, use GitHub Desktop `Push origin`, then verify `git rev-parse --short HEAD` equals `git rev-parse --short origin/main`. Remaining bottleneck: GitHub CLI credentials are not configured on this Mac, so fully terminal-based sync still depends on fixing GitHub auth or using GitHub Desktop as the fallback.
 - Version `1.2`, 2026-05-28 improvement: for image-delivery changes, do not rsync the whole `public/uploads` tree or restore database content when originals already match. The faster path is to commit the optimizer/rendering code, pull it on the server, run `npm run images:optimize` directly on the server's existing originals, then verify representative image byte size and download time. This avoided transferring roughly `1.3GB` of originals and produced only about `30-31MB` of display WebP derivatives. Reusable check: compare one representative before/after image through the public URL; porcelain changed from a `2,004,292` byte PNG taking about `3.656s` over the public network to a `37,762` byte WebP taking about `0.044s`. Nginx direct `/uploads/` serving with `alias /home/ubuntu/Mnemonic/public/uploads/` and one-year immutable cache is a good cheap-server baseline, but if `alias` points into `/home/ubuntu`, ensure `/home/ubuntu` has execute permission for traversal (`drwxr-x--x`) or Nginx returns `403`. Remaining bottleneck: users opening port `3000` directly still bypass Nginx cache headers, though the app now serves the much smaller WebP URL; the long-term path remains a real domain plus Tencent COS/CDN after备案.
 - Version `1.3`, 2026-05-29 improvement: even when the user says `以本地为准`, classify the requested surface first. For this request the user said `代码同步`, so the fastest safe path was code-only plus server `.env` non-secret SES settings; skipping database dump/restore and `public/uploads` rsync avoided unnecessary data risk. Reusable check: after an email-verification deploy, query server env as `key=set/unset` only, never print secret values, and verify `/register` contains both `发送验证码` and `6 位验证码`. Remaining bottlenecks: GitHub CLI credentials are still unavailable, Tencent SES template review may still be pending, and real email delivery cannot work until `TENCENTCLOUD_SECRET_ID` and `TENCENTCLOUD_SECRET_KEY` are created/entered with explicit user approval.
+- Version `1.4`, 2026-05-30 improvement: when A and B have both diverged, the safe path is merge rehearsal first, production B as the base, A-only inserts, guarded A-newer content updates, and additive upload union. Do not call this sync, and do not use whole-database restore. Reusable guard: do not update existing live user-state rows such as `WordMark`; insert only missing logical rows and keep B for conflicts. Remaining bottleneck: the merge SQL is still manual and should become a reviewed script if A/B divergence happens again.
 
 Fastest safe order:
 
-1. Scope and optimize the sync path: decide whether the change is docs-only, code-only, uploads-only, data-only, or full local-source sync; review the last sync record; note the fastest safe path and any expected bottleneck before running the sync.
+1. Scope and optimize the sync path: decide whether the change is docs-only, code-only, schema-migration, uploads-additive, production-to-local refresh, data patch/migration, or explicit local-over-production restore; review the last sync record; note the fastest safe path and expected bottleneck before running it.
 2. Local preflight: check `git status --short --branch`, `git fetch origin`, `npm run typecheck -- --pretty false`, and `npm run build` when code changed. If `prisma/schema.prisma` changed, make sure a matching migration exists before deployment; `npx prisma migrate status` must be clean locally.
-3. Commit and push code/reports to GitHub. Prefer CLI `git push origin main`; if HTTPS credentials fail on this Mac, use GitHub Desktop's `Push origin` button and then verify `git rev-parse --short HEAD` equals `git rev-parse --short origin/main`.
-4. In parallel after preflight, create a local source dump and a server pre-restore backup only when database content will be restored or overwritten. The server backup must complete before any restore. Keep both dump paths in the final report and, if this is a notable production sync, record them in this document.
-5. Transfer the local dump to `/home/ubuntu/Mnemonic/backups/db-dumps/` and sync `public/uploads/` with `rsync -az --delete` only when local is intentionally the source of truth. Use `--ignore-existing` only for additive image migration, not for full local-source sync.
-6. On the server: stop `mnemonic.service`, `git pull --ff-only origin main`, restore the local dump over the server database with the Docker `postgres:16-alpine` client only when data restore is in scope, run `npm ci --no-audit --no-fund`, `npm run db:deploy`, `NODE_OPTIONS=--max_old_space_size=1536 npm run build`, then restart the service.
-7. Verify all three layers: local/GitHub/server commit hashes match; server service is `active`; homepage returns `200 OK`; `/api/word-card/memory` returns real JSON; local and server counts match for `Word`, `MnemonicEntry`, `MemoryNode`, `MemoryLink`, `User`, and `ImportDraft` when data was synced; local and server `public/uploads` file counts match when uploads were synced.
+3. Commit and push code/reports/migrations to GitHub. Prefer CLI `git push origin main`; if HTTPS credentials fail on this Mac, use GitHub Desktop's `Push origin` button and then verify `git rev-parse --short HEAD` equals `git rev-parse --short origin/main`.
+4. For normal code/schema deployment, do not create or restore a local source dump. On the server, `git pull --ff-only`, install dependencies, run `npm run db:deploy`, build, restart, and verify.
+5. Create a server database backup before any migration that is not obviously additive, before any script that mutates production data, and before every explicit local-over-production restore. The backup must finish before the risky operation starts.
+6. Sync uploads to production only when assets changed and the database already references those paths. Prefer additive upload syncs; use `rsync --delete` from local to production only in an explicit local-over-production restore.
+7. Verify all affected layers: local/GitHub/server commit hashes match for code deploys; server service is `active`; homepage returns `200 OK`; `/api/word-card/memory` returns real JSON; compare production table counts before/after for migrations/data scripts; compare upload counts and at least one representative uploaded asset when uploads changed.
 8. Before the final report, update this document with the version/sync record and the sync-method iteration note: chosen path, improvement over the previous path, new reusable command/check if any, and unresolved bottleneck if any.
 
 Reusable command skeleton:
@@ -686,6 +733,35 @@ git rev-parse --short origin/main
 ```
 
 ```bash
+# Normal server code/schema deploy: no production data overwrite
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
+  'set -e; cd ~/Mnemonic; git fetch origin; git pull --ff-only origin main; npm ci --no-audit --no-fund; npm run db:deploy; NODE_OPTIONS=--max_old_space_size=1536 npm run build; sudo systemctl restart mnemonic; sudo systemctl is-active mnemonic'
+```
+
+```bash
+# Production-to-local data refresh (B -> A) when local needs realistic current data
+ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
+  'cd ~/Mnemonic && mkdir -p backups/db-dumps && set -a && . ./.env && set +a && DBURL=${DATABASE_URL%\?schema=public} && ts=$(date +%Y%m%d-%H%M%S) && pg_dump "$DBURL" -Fc --no-owner --no-acl -f "backups/db-dumps/server-source-for-local-${ts}.dump" && ls -lh "backups/db-dumps/server-source-for-local-${ts}.dump"'
+
+mkdir -p backups/db-dumps
+rsync -az --stats \
+  -e 'ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes' \
+  ubuntu@124.221.123.13:/home/ubuntu/Mnemonic/backups/db-dumps/server-source-for-local-*.dump backups/db-dumps/
+
+ts=$(date +%Y%m%d-%H%M%S)
+docker exec mnemonic-postgres pg_dump -U mnemonic -d mnemonic -Fc --no-owner --no-acl > "backups/db-dumps/local-before-production-refresh-${ts}.dump"
+dump=$(ls -t backups/db-dumps/server-source-for-local-*.dump | head -n 1)
+docker exec mnemonic-postgres psql -U mnemonic -d mnemonic -v ON_ERROR_STOP=1 -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid();"
+docker exec -i mnemonic-postgres pg_restore --clean --if-exists --no-owner --no-acl -U mnemonic -d mnemonic < "$dump"
+
+# Optional additive upload refresh; avoid deleting local-only files unless making an explicit mirror.
+rsync -az --ignore-existing --stats \
+  -e 'ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes' \
+  ubuntu@124.221.123.13:/home/ubuntu/Mnemonic/public/uploads/ public/uploads/
+```
+
+```bash
+# Explicit local-over-production restore only. Use only after the user confirms production data may be overwritten.
 # Local source database dump
 ts=$(date +%Y%m%d-%H%M%S)
 mkdir -p backups/db-dumps
@@ -695,13 +771,13 @@ ls -lh "$dump"
 ```
 
 ```bash
-# Server pre-restore backup
+# Server pre-restore backup. Required before any local-over-production restore.
 ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
   'cd ~/Mnemonic && mkdir -p backups/db-dumps && set -a && . ./.env && set +a && DBURL=${DATABASE_URL%\?schema=public} && ts=$(date +%Y%m%d-%H%M%S) && pg_dump "$DBURL" -Fc --no-owner --no-acl -f "backups/db-dumps/server-before-local-sync-${ts}.dump" && ls -lh "backups/db-dumps/server-before-local-sync-${ts}.dump"'
 ```
 
 ```bash
-# Transfer local dump and uploaded files
+# Explicit local-over-production restore: transfer local dump and uploaded files
 dump=$(ls -t backups/db-dumps/mnemonic-local-source-*.dump | head -n 1)
 rsync -az --stats \
   -e 'ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes' \
@@ -715,7 +791,7 @@ rsync -az --delete --stats \
 ```
 
 ```bash
-# Server deploy and local-source database restore
+# Explicit local-over-production restore: server deploy and local-source database restore
 ssh -i /Users/mr.mao/.ssh/mnemonic_tencent_lighthouse -o IdentitiesOnly=yes ubuntu@124.221.123.13 \
   'set -e; sudo systemctl stop mnemonic; cd ~/Mnemonic; git fetch origin; git pull --ff-only origin main; dump=$(ls -t backups/db-dumps/mnemonic-local-source-*.dump | head -n 1); dump_base=$(basename "$dump"); set -a; . ./.env; set +a; DBURL=${DATABASE_URL%\?schema=public}; psql "$DBURL" -v ON_ERROR_STOP=1 -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid();" >/dev/null; sudo docker run --rm --network host -v "$PWD/backups/db-dumps:/dumps:ro" -e DBURL="$DBURL" -e DUMP="$dump_base" postgres:16-alpine sh -lc '\''pg_restore --clean --if-exists --no-owner --no-acl --dbname "$DBURL" "/dumps/$DUMP"'\''; npm ci --no-audit --no-fund; npm run db:deploy; NODE_OPTIONS=--max_old_space_size=1536 npm run build; sudo systemctl restart mnemonic; sudo systemctl is-active mnemonic'
 ```

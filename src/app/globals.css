@@ -105,6 +105,59 @@ html.mn-memory-card-open body {
   overscroll-behavior: none;
 }
 
+.mn-site-loading {
+  min-height: calc(100vh - 76px);
+  padding: 72px 24px;
+  background: var(--mn-bg);
+  color: var(--mn-text);
+  display: grid;
+  place-items: center;
+}
+
+.mn-loading-line {
+  width: min(420px, calc(100vw - 64px));
+  color: var(--mn-text-muted);
+}
+
+.mn-loading-line-track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 1px;
+  overflow: hidden;
+  border-radius: var(--mn-radius-pill);
+  background: var(--mn-border-soft);
+}
+
+.mn-loading-line-indicator {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 34%;
+  height: 1px;
+  background: currentColor;
+  transform: translateX(-120%);
+  animation: mn-loading-line-sweep 1050ms cubic-bezier(0.42, 0, 0.2, 1) infinite;
+}
+
+@keyframes mn-loading-line-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mn-loading-line-indicator,
+  .mn-search-loading::after,
+  .mn-search-result-loading::after {
+    animation: none;
+    transform: translateX(96%);
+  }
+}
+
 .mn-desktop-mode {
   display: var(--mn-mode-display, block);
 }
@@ -3175,6 +3228,23 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
     width: 32px !important;
   }
 
+  .mn-memory-card-panel > header button.mn-memory-card-view-toggle {
+    border-radius: 50% !important;
+    gap: 0 !important;
+    height: 32px !important;
+    padding: 0 !important;
+    width: 32px !important;
+  }
+
+  .mn-memory-card-panel > header button.mn-memory-card-view-toggle span {
+    display: none !important;
+  }
+
+  .mn-memory-card-panel > header button.mn-memory-card-view-toggle svg {
+    height: 18px !important;
+    width: 18px !important;
+  }
+
   .mn-memory-card-panel > header [class*="max-w-48"] {
     max-width: 5.75rem !important;
   }
@@ -3367,6 +3437,98 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
   box-shadow: none;
   color: #1d1913;
   padding: 14px 16px;
+}
+
+.mn-memory-card-panel-white > header {
+  border-bottom-color: transparent !important;
+  position: relative;
+  z-index: 2;
+}
+
+.mn-memory-card-panel-white {
+  height: min(640px, calc(100vh - 7rem));
+  min-height: min(560px, calc(100vh - 7rem));
+}
+
+.mn-memory-card-white-face {
+  align-items: center;
+  appearance: none;
+  border: 0;
+  color: #171a1f;
+  cursor: pointer;
+  font-family: var(--mn-serif-word, var(--mn-serif));
+  font-size: clamp(56px, 8.8vw, 116px);
+  font-weight: 400;
+  inset: 0;
+  letter-spacing: 0;
+  line-height: 1;
+  min-height: 0;
+  outline: none;
+  overflow-wrap: normal;
+  padding: 0 !important;
+  position: absolute !important;
+  text-align: center;
+  z-index: 1;
+}
+
+.mn-memory-card-white-word-wrap {
+  display: block;
+  left: 50%;
+  max-width: calc(100% - 48px);
+  position: absolute;
+  top: 38.2%;
+  transform: translate(-50%, -50%);
+  width: max-content;
+}
+
+.mn-memory-card-white-word {
+  display: block;
+  max-width: none;
+  overflow: visible;
+  transform: scale(var(--mn-white-card-word-scale, 1));
+  transform-origin: center;
+  white-space: nowrap;
+}
+
+.mn-memory-card-white-face .mn-memory-card-mark-strip {
+  -webkit-backdrop-filter: saturate(1.2) blur(18px);
+  align-items: center;
+  backdrop-filter: saturate(1.2) blur(18px);
+  background: rgba(255, 255, 255, 0.52);
+  border: 1px solid rgba(60, 60, 67, 0.1);
+  border-radius: 999px;
+  box-shadow: 0 18px 44px rgba(23, 26, 31, 0.08);
+  display: grid;
+  gap: 0;
+  grid-template-columns: repeat(3, 1fr);
+  justify-items: center;
+  left: 50%;
+  margin-top: 0;
+  padding: 10px 14px;
+  position: absolute;
+  bottom: clamp(28px, 5vh, 48px);
+  transform: translateX(-50%);
+  width: min(316px, calc(100% - 96px));
+}
+
+.mn-memory-card-white-face .mn-memory-card-mark-button {
+  box-shadow: 0 6px 18px rgba(23, 26, 31, 0.06);
+  height: 52px !important;
+  width: 52px !important;
+}
+
+.mn-memory-card-white-face:focus-visible {
+  box-shadow: inset 0 0 0 2px rgba(23, 26, 31, 0.16);
+}
+
+.dark .mn-memory-card-white-face,
+:root[data-theme="dark"] .mn-memory-card-white-face {
+  color: #f5efe5;
+}
+
+.dark .mn-memory-card-white-face:focus-visible,
+:root[data-theme="dark"] .mn-memory-card-white-face:focus-visible {
+  box-shadow: inset 0 0 0 2px rgba(245, 239, 229, 0.22);
 }
 
 .memory-card-heading {
@@ -4903,7 +5065,27 @@ html[data-theme="dark"] .mn-search {
 
 .mn-search-loading,
 .mn-search-result-loading {
-  animation: mn-search-spin 900ms linear infinite;
+  position: relative;
+  display: inline-block;
+  width: 22px;
+  height: 1px;
+  overflow: hidden;
+  border-radius: var(--mn-radius-pill);
+  background: var(--mn-border-soft);
+  vertical-align: middle;
+}
+
+.mn-search-loading::after,
+.mn-search-result-loading::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  height: 1px;
+  background: currentColor;
+  content: "";
+  opacity: 1;
+  transform: translateX(-110%);
+  animation: mn-loading-line-sweep 980ms cubic-bezier(0.42, 0, 0.2, 1) infinite;
 }
 
 .mn-search-popover {
@@ -5005,10 +5187,11 @@ html[data-theme="dark"] .mn-search-result[aria-selected="true"] {
 }
 
 .mn-search-result-loading {
-  width: 14px;
-  height: 14px;
+  width: 26px;
+  height: 1px;
   margin-left: auto;
   color: var(--mn-text-faint);
+  align-self: center;
 }
 
 .mn-search-result-meaning {
@@ -5019,12 +5202,6 @@ html[data-theme="dark"] .mn-search-result[aria-selected="true"] {
   white-space: nowrap;
   color: var(--mn-text-muted);
   font-size: 14px;
-}
-
-@keyframes mn-search-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .mn-category-row {
@@ -5523,29 +5700,8 @@ html[data-theme="dark"] .mn-mini-graph-node text {
   justify-content: center;
 }
 
-.mn-level-loading-inner {
+.mn-level-loading .mn-loading-line {
   width: min(880px, calc(100% - 96px));
-  height: 1px;
-  background: var(--mn-border-soft);
-  overflow: hidden;
-}
-
-.mn-level-loading-line {
-  display: block;
-  width: 24%;
-  height: 1px;
-  background: var(--mn-text-muted);
-  animation: mn-level-loading-line 1100ms ease-in-out infinite;
-}
-
-@keyframes mn-level-loading-line {
-  0% {
-    transform: translateX(-100%);
-  }
-
-  100% {
-    transform: translateX(420%);
-  }
 }
 
 html.dark .mn-level-page,

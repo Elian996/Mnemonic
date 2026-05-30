@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -75,9 +75,8 @@ export function ThemeToggle({
     return () => media.removeEventListener("change", handleSystemThemeChange);
   }, [initialTheme]);
 
-  const activeIcon = useMemo(() => themeIcons[theme], [theme]);
   const nextTheme = themes[(themes.indexOf(theme) + 1) % themes.length];
-  const ActiveIcon = activeIcon;
+  const ActiveIcon = themeIcons[theme];
   const setNextTheme = (next: Theme) => {
     setTheme(next);
     applyTheme(next);
@@ -85,24 +84,16 @@ export function ThemeToggle({
 
   if (variant === "segmented") {
     return (
-      <div className={cn("mn-theme-segmented", className)} role="group" aria-label="主题模式">
-        {themes.map((item) => {
-          const Icon = themeIcons[item];
-          return (
-            <button
-              key={item}
-              type="button"
-              className={cn("mn-theme-segmented-button", theme === item && "is-active")}
-              onClick={() => setNextTheme(item)}
-              aria-pressed={theme === item}
-              title={themeLabels[item]}
-            >
-              <Icon aria-hidden />
-              <span>{themeLabels[item]}</span>
-            </button>
-          );
-        })}
-      </div>
+      <button
+        type="button"
+        className={cn("mn-theme-cycle-button", className)}
+        aria-label={`当前主题：${themeLabels[theme]}，切换到${themeLabels[nextTheme]}`}
+        title={`当前：${themeLabels[theme]}，点按切换到${themeLabels[nextTheme]}`}
+        onClick={() => setNextTheme(nextTheme)}
+      >
+        <ActiveIcon aria-hidden />
+        <span>{themeLabels[theme]}</span>
+      </button>
     );
   }
 

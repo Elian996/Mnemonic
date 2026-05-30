@@ -166,7 +166,7 @@ html.mn-memory-card-open body {
   display: none;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 767px), (max-height: 560px) and (pointer: coarse) {
   .mn-desktop-mode {
     display: none !important;
   }
@@ -216,7 +216,7 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
   visibility: hidden !important;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 768px) and (min-height: 561px), (min-width: 768px) and (pointer: fine) {
   .mn-desktop-mode {
     display: var(--mn-mode-display, block);
   }
@@ -2681,7 +2681,7 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
   }
 }
 
-@media (max-width: 767px) {
+@media (max-width: 767px), (max-height: 560px) and (pointer: coarse) {
   .mn-level-page {
     /* Apple system colors */
     --mn-ink: #1D1D1F;
@@ -2813,8 +2813,8 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
     display: inline-flex;
     gap: 0;
     background: rgba(120,120,128,0.10);
-    border-radius: 9px;
-    padding: 3px;
+    border-radius: 11px;
+    padding: 4px;
   }
 
   :root.dark .mn-mobile-word-actions,
@@ -2826,12 +2826,12 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
     align-items: center;
     background: transparent;
     border: 0;
-    border-radius: 7px;
+    border-radius: 9px;
     color: var(--mn-muted);
     display: inline-flex;
-    height: 30px;
+    height: 36px;
     justify-content: center;
-    width: 32px;
+    width: 38px;
   }
 
   .mn-mobile-word-tool:disabled {
@@ -3138,25 +3138,24 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
 
   /* Word card popup — Apple-style polished */
   .mn-memory-card-panel {
-    --mn-mobile-card-fixed-height: calc(
-      100svh - max(20px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))
-    );
+    --mn-mobile-card-edge-top: max(10px, env(safe-area-inset-top));
+    --mn-mobile-card-edge-bottom: max(12px, env(safe-area-inset-bottom));
     --mn-mobile-card-fixed-width: min(430px, calc(100vw - 20px));
     border: 0 !important;
     border-radius: 14px !important;
+    bottom: calc(var(--mn-card-visual-offset-bottom, 0px) + var(--mn-mobile-card-edge-bottom)) !important;
     box-shadow: 0 24px 60px rgba(0,0,0,0.18) !important;
-    height: var(--mn-mobile-card-fixed-height) !important;
+    height: auto !important;
     left: 50% !important;
-    max-height: var(--mn-mobile-card-fixed-height) !important;
+    max-height: none !important;
     max-width: var(--mn-mobile-card-fixed-width) !important;
-    min-height: var(--mn-mobile-card-fixed-height) !important;
+    min-height: 0 !important;
     min-width: var(--mn-mobile-card-fixed-width) !important;
-    top: max(10px, env(safe-area-inset-top)) !important;
-    transition:
-      transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 180ms ease;
+    top: calc(var(--mn-card-visual-offset-top, 0px) + var(--mn-mobile-card-edge-top)) !important;
+    transform: translateX(-50%) !important;
+    transition: none !important;
     width: var(--mn-mobile-card-fixed-width) !important;
-    will-change: transform;
+    will-change: auto;
     -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
     background: var(--mn-memory-card-bg, #fffaf0) !important;
@@ -3177,9 +3176,7 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
 
   @supports (height: 100dvh) {
     .mn-memory-card-panel {
-      --mn-mobile-card-fixed-height: calc(
-        100dvh - max(20px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))
-      );
+      --mn-mobile-card-fixed-width: min(430px, calc(100dvw - 20px));
     }
   }
 
@@ -3208,7 +3205,12 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
     background-image: none !important;
     border-bottom: 0.5px solid var(--mn-memory-card-line) !important;
     position: relative;
+    touch-action: manipulation;
     z-index: 1;
+  }
+
+  .mn-memory-card-panel button {
+    touch-action: manipulation;
   }
 
   .mn-memory-card-panel > header h2 {
@@ -3224,16 +3226,16 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
     border: 0 !important;
     background: var(--mn-memory-card-bg-soft) !important;
     color: var(--mn-muted) !important;
-    height: 32px !important;
-    width: 32px !important;
+    height: 38px !important;
+    width: 38px !important;
   }
 
   .mn-memory-card-panel > header button.mn-memory-card-view-toggle {
     border-radius: 50% !important;
     gap: 0 !important;
-    height: 32px !important;
+    height: 38px !important;
     padding: 0 !important;
-    width: 32px !important;
+    width: 38px !important;
   }
 
   .mn-memory-card-panel > header button.mn-memory-card-view-toggle span {
@@ -3246,7 +3248,7 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
   }
 
   .mn-memory-card-panel > header [class*="max-w-48"] {
-    max-width: 5.75rem !important;
+    max-width: 8.75rem !important;
   }
 
   .mn-memory-card-desktop-action {
@@ -3265,16 +3267,16 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
   .mn-memory-card-tab-strip {
     background: var(--mn-memory-card-bg-soft) !important;
     border: 0 !important;
-    max-width: 7.75rem !important;
+    max-width: 8.75rem !important;
     padding: 4px !important;
   }
 
   .mn-memory-card-tab-strip button {
     border: 0 !important;
     border-radius: 999px !important;
-    height: 30px !important;
+    height: 34px !important;
     touch-action: none;
-    width: 30px !important;
+    width: 34px !important;
   }
 
   .mn-memory-card-word-nav {
@@ -3286,7 +3288,7 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
   .mn-memory-card-word-nav button {
     background: var(--mn-memory-card-bg-soft) !important;
     border: 0 !important;
-    border-radius: 8px !important;
+    border-radius: 10px !important;
   }
 
   /* V/O/X 标记按钮 — 保持圆形 + 颜色激活态 */
@@ -3302,8 +3304,8 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
 
   .mn-memory-card-mark-strip button {
     flex: 0 0 auto !important;
-    height: 40px !important;
-    width: 40px !important;
+    height: 44px !important;
+    width: 44px !important;
     border-radius: 50% !important;
     box-shadow: none !important;
   }
@@ -3413,7 +3415,7 @@ html.mn-memory-card-open .mn-repository-global-search-popover {
   }
 }
 
-@media (min-width: 768px) {
+@media (min-width: 768px) and (min-height: 561px), (min-width: 768px) and (pointer: fine) {
   .mn-mobile-card-tap-zones {
     display: none;
   }
@@ -4925,6 +4927,42 @@ html[data-theme="dark"] .mn-home-page {
   color: var(--mn-text);
 }
 
+.mn-theme-cycle-button {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--mn-border-soft);
+  border-radius: 999px;
+  color: var(--mn-text);
+  cursor: pointer;
+  display: inline-flex;
+  font-family: var(--mn-sans);
+  font-size: 13px;
+  font-weight: 600;
+  gap: 7px;
+  height: 38px;
+  justify-content: center;
+  letter-spacing: 0;
+  line-height: 1;
+  min-width: 72px;
+  padding: 0 13px;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.mn-theme-cycle-button:hover {
+  background: rgba(255, 255, 255, 0.34);
+  border-color: var(--mn-border);
+}
+
+.mn-theme-cycle-button svg {
+  height: 15px;
+  stroke-width: 1.9;
+  width: 15px;
+}
+
 html.dark .mn-theme-segmented,
 html[data-theme="dark"] .mn-theme-segmented {
   background: rgba(255, 255, 255, 0.05);
@@ -4935,6 +4973,16 @@ html.dark .mn-theme-segmented-button.is-active,
 html[data-theme="dark"] .mn-theme-segmented-button:hover,
 html[data-theme="dark"] .mn-theme-segmented-button.is-active {
   background: rgba(255, 255, 255, 0.12);
+}
+
+html.dark .mn-theme-cycle-button,
+html[data-theme="dark"] .mn-theme-cycle-button {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+html.dark .mn-theme-cycle-button:hover,
+html[data-theme="dark"] .mn-theme-cycle-button:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 html.dark .mn-home-theme-button,
@@ -6242,7 +6290,7 @@ html[data-theme="dark"] .mn-profile-page {
 }
 
 .mn-profile-page .mn-topbar a,
-.mn-profile-page .mn-topbar button:not(.mn-theme-segmented-button) {
+.mn-profile-page .mn-topbar button:not(.mn-theme-segmented-button):not(.mn-theme-cycle-button) {
   border-color: var(--mn-border-soft) !important;
   background: rgba(255, 255, 255, 0.14) !important;
   color: var(--mn-text) !important;
@@ -6251,9 +6299,9 @@ html[data-theme="dark"] .mn-profile-page {
 }
 
 html.dark .mn-profile-page .mn-topbar a,
-html.dark .mn-profile-page .mn-topbar button:not(.mn-theme-segmented-button),
+html.dark .mn-profile-page .mn-topbar button:not(.mn-theme-segmented-button):not(.mn-theme-cycle-button),
 html[data-theme="dark"] .mn-profile-page .mn-topbar a,
-html[data-theme="dark"] .mn-profile-page .mn-topbar button:not(.mn-theme-segmented-button) {
+html[data-theme="dark"] .mn-profile-page .mn-topbar button:not(.mn-theme-segmented-button):not(.mn-theme-cycle-button) {
   background: rgba(255, 255, 255, 0.055) !important;
 }
 
@@ -6997,7 +7045,7 @@ html[data-theme="dark"] .mn-profile-page input:not([type="checkbox"]):not([type=
 
 
 /* Apple-style iOS Settings look for mobile /me page */
-@media (max-width: 767px) {
+@media (max-width: 767px), (max-height: 560px) and (pointer: coarse) {
   .mn-profile-page {
     --mn-ink: #1D1D1F;
     --mn-muted: rgba(29,29,31,0.6);
@@ -7633,8 +7681,8 @@ html[data-theme="dark"] .mn-profile-page input:not([type="checkbox"]):not([type=
     box-shadow: none !important;
     flex: 0 0 auto !important;
     font-weight: 600 !important;
-    height: 30px !important;
-    width: 30px !important;
+    height: 34px !important;
+    width: 34px !important;
   }
 
   .mn-mobile-word-mark-buttons button[data-mark-state="KNOWN"][data-active="false"],
@@ -7674,8 +7722,8 @@ html[data-theme="dark"] .mn-profile-page input:not([type="checkbox"]):not([type=
   }
 
   .mn-profile-page .mn-profile-mark-buttons button {
-    height: 30px !important;
-    width: 30px !important;
+    height: 34px !important;
+    width: 34px !important;
   }
 
   /* Hide PublicTopBar action buttons (book / save) — already shown inline elsewhere */
@@ -7699,7 +7747,7 @@ html[data-theme="dark"] .mn-profile-page input:not([type="checkbox"]):not([type=
   }
 }
 
-@media (max-width: 767px) and (prefers-color-scheme: dark) {
+@media (max-width: 767px) and (prefers-color-scheme: dark), (max-height: 560px) and (pointer: coarse) and (prefers-color-scheme: dark) {
   html[data-theme="system"] .mn-profile-page {
     --mn-ink: #FFFFFF;
     --mn-muted: rgba(255,255,255,0.6);
@@ -8912,5 +8960,332 @@ html[data-theme="dark"] .mn-repository-notice {
 
   .mn-repository-bulk-word {
     font-size: 22px !important;
+  }
+}
+
+@media (max-width: 767px), (max-height: 560px) and (pointer: coarse) {
+  button,
+  a,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  :is(
+    .mn-mobile-level-back,
+    .mn-mobile-word-tool,
+    .mn-mobile-word-search-submit,
+    .mn-memory-card-panel > header button:not(.mn-memory-card-mark-button),
+    .mn-memory-card-word-nav button,
+    .mn-memory-card-tab-strip button,
+    .mn-topbar > div:last-child a,
+    .mn-topbar > div:last-child button:not(.mn-theme-segmented-button),
+    .mn-topbar > div:first-child > a,
+    .mn-home-theme-button,
+    .mn-theme-segmented-button,
+    .mn-theme-cycle-button,
+    .mn-category-button,
+    .mn-preview-button,
+    .mn-profile-outline-button,
+    .mn-profile-back-link,
+    .mn-profile-button,
+    .mn-profile-icon-button,
+    .mn-profile-toggle-button,
+    .mn-profile-edit-button,
+    .mn-profile-meaning-toggle,
+    .mn-profile-sort-control :is(a, button),
+    .mn-profile-view-control button,
+    .mn-repository-page-button,
+    .mn-word-card-stat-link
+  ) {
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease,
+      transform 120ms ease,
+      filter 120ms ease;
+  }
+
+  :is(
+    .mn-mobile-level-back,
+    .mn-mobile-word-tool,
+    .mn-mobile-word-search-submit,
+    .mn-memory-card-panel > header button:not(.mn-memory-card-mark-button),
+    .mn-memory-card-word-nav button,
+    .mn-memory-card-tab-strip button,
+    .mn-topbar > div:last-child a,
+    .mn-topbar > div:last-child button:not(.mn-theme-segmented-button),
+    .mn-topbar > div:first-child > a,
+    .mn-home-theme-button,
+    .mn-theme-segmented-button,
+    .mn-theme-cycle-button,
+    .mn-category-button,
+    .mn-preview-button,
+    .mn-profile-outline-button,
+    .mn-profile-back-link,
+    .mn-profile-button,
+    .mn-profile-icon-button,
+    .mn-profile-toggle-button,
+    .mn-profile-edit-button,
+    .mn-profile-meaning-toggle,
+    .mn-profile-sort-control :is(a, button),
+    .mn-profile-view-control button,
+    .mn-repository-page-button,
+    .mn-word-card-stat-link
+  ):active {
+    background: rgba(0, 122, 255, 0.14) !important;
+    border-color: rgba(0, 122, 255, 0.36) !important;
+    color: #007aff !important;
+    transform: scale(0.94);
+  }
+
+  html.dark
+    :is(
+      .mn-mobile-level-back,
+      .mn-mobile-word-tool,
+      .mn-mobile-word-search-submit,
+      .mn-memory-card-panel > header button:not(.mn-memory-card-mark-button),
+      .mn-memory-card-word-nav button,
+      .mn-memory-card-tab-strip button,
+      .mn-topbar > div:last-child a,
+      .mn-topbar > div:last-child button:not(.mn-theme-segmented-button),
+      .mn-topbar > div:first-child > a,
+      .mn-home-theme-button,
+      .mn-theme-segmented-button,
+      .mn-theme-cycle-button,
+      .mn-category-button,
+      .mn-preview-button,
+      .mn-profile-outline-button,
+      .mn-profile-back-link,
+      .mn-profile-button,
+      .mn-profile-icon-button,
+      .mn-profile-toggle-button,
+      .mn-profile-edit-button,
+      .mn-profile-meaning-toggle,
+      .mn-profile-sort-control :is(a, button),
+      .mn-profile-view-control button,
+      .mn-repository-page-button,
+      .mn-word-card-stat-link
+    ):active,
+  html[data-theme="dark"]
+    :is(
+      .mn-mobile-level-back,
+      .mn-mobile-word-tool,
+      .mn-mobile-word-search-submit,
+      .mn-memory-card-panel > header button:not(.mn-memory-card-mark-button),
+      .mn-memory-card-word-nav button,
+      .mn-memory-card-tab-strip button,
+      .mn-topbar > div:last-child a,
+      .mn-topbar > div:last-child button:not(.mn-theme-segmented-button),
+      .mn-topbar > div:first-child > a,
+      .mn-home-theme-button,
+      .mn-theme-segmented-button,
+      .mn-theme-cycle-button,
+      .mn-category-button,
+      .mn-preview-button,
+      .mn-profile-outline-button,
+      .mn-profile-back-link,
+      .mn-profile-button,
+      .mn-profile-icon-button,
+      .mn-profile-toggle-button,
+      .mn-profile-edit-button,
+      .mn-profile-meaning-toggle,
+      .mn-profile-sort-control :is(a, button),
+      .mn-profile-view-control button,
+      .mn-repository-page-button,
+      .mn-word-card-stat-link
+    ):active {
+    background: rgba(10, 132, 255, 0.22) !important;
+    border-color: rgba(100, 210, 255, 0.32) !important;
+    color: #64d2ff !important;
+  }
+
+  :is(
+    .mn-level-mark-buttons button,
+    .mn-mobile-word-mark-buttons button,
+    .mn-memory-card-mark-strip button,
+    .mn-profile-mark-buttons button
+  ) {
+    transition:
+      filter 120ms ease,
+      transform 120ms ease;
+  }
+
+  :is(
+    .mn-level-mark-buttons button,
+    .mn-mobile-word-mark-buttons button,
+    .mn-memory-card-mark-strip button,
+    .mn-profile-mark-buttons button
+  ):active {
+    filter: brightness(1.08) saturate(1.12);
+    transform: scale(0.92);
+  }
+
+  :is(
+    .mn-mobile-word-row,
+    .mn-mobile-word-search-result,
+    .mn-profile-status-item,
+    .mn-profile-directory-row,
+    .mn-profile-page .mn-profile-word-card,
+    .mn-profile-page .mn-profile-word-row,
+    .mn-repository-bulk-row
+  ):active {
+    background: rgba(0, 122, 255, 0.09) !important;
+  }
+
+  html.dark
+    :is(
+      .mn-mobile-word-row,
+      .mn-mobile-word-search-result,
+      .mn-profile-status-item,
+      .mn-profile-directory-row,
+      .mn-profile-page .mn-profile-word-card,
+      .mn-profile-page .mn-profile-word-row,
+      .mn-repository-bulk-row
+    ):active,
+  html[data-theme="dark"]
+    :is(
+      .mn-mobile-word-row,
+      .mn-mobile-word-search-result,
+      .mn-profile-status-item,
+      .mn-profile-directory-row,
+      .mn-profile-page .mn-profile-word-card,
+      .mn-profile-page .mn-profile-word-row,
+      .mn-repository-bulk-row
+    ):active {
+    background: rgba(10, 132, 255, 0.16) !important;
+  }
+
+  .mn-topbar > div:last-child a,
+  .mn-topbar > div:last-child button:not(.mn-theme-segmented-button),
+  .mn-topbar > div:first-child > a {
+    min-height: 42px !important;
+    min-width: 42px !important;
+  }
+
+  .mn-theme-segmented {
+    min-height: 42px;
+    padding: 4px;
+  }
+
+  .mn-theme-segmented-button {
+    height: 34px !important;
+    min-width: 40px !important;
+  }
+
+  .mn-theme-cycle-button {
+    height: 42px !important;
+    min-width: 42px !important;
+    padding: 0 !important;
+    width: 42px !important;
+  }
+
+  .mn-theme-cycle-button span {
+    display: none;
+  }
+
+  .mn-home-theme-button,
+  .mn-mobile-level-back {
+    height: 44px !important;
+    width: 44px !important;
+  }
+
+  .mn-category-button {
+    min-height: 48px;
+    padding-inline: 22px;
+  }
+
+  .mn-preview-button {
+    min-height: 52px;
+  }
+
+  .mn-mobile-word-actions {
+    border-radius: 12px;
+    padding: 5px;
+  }
+
+  .mn-mobile-word-tool {
+    height: 40px;
+    width: 42px;
+  }
+
+  .mn-mobile-word-search-submit {
+    height: 44px;
+    width: 44px;
+  }
+
+  .mn-mobile-word-row {
+    min-height: 70px;
+  }
+
+  .mn-mobile-word-mark-buttons,
+  .mn-profile-page .mn-profile-mark-buttons {
+    gap: 7px !important;
+  }
+
+  .mn-mobile-word-mark-buttons button,
+  .mn-profile-page .mn-profile-mark-buttons button {
+    height: 36px !important;
+    width: 36px !important;
+  }
+
+  .mn-memory-card-panel > header button:not(.mn-memory-card-mark-button),
+  .mn-memory-card-panel > header button.mn-memory-card-view-toggle {
+    height: 40px !important;
+    width: 40px !important;
+  }
+
+  .mn-memory-card-word-nav button {
+    height: 38px !important;
+    width: 38px !important;
+  }
+
+  .mn-memory-card-tab-strip button {
+    height: 36px !important;
+    width: 36px !important;
+  }
+
+  .mn-memory-card-mark-strip button {
+    height: 46px !important;
+    width: 46px !important;
+  }
+
+  .mn-profile-status-item,
+  .mn-profile-directory-row {
+    min-height: 58px !important;
+  }
+
+  .mn-profile-status-item .mn-profile-status-icon,
+  .mn-profile-directory-icon {
+    height: 34px !important;
+    width: 34px !important;
+  }
+
+  .mn-profile-page .mn-profile-sort-control,
+  .mn-profile-page .mn-profile-view-control {
+    border-radius: 12px !important;
+    padding: 5px !important;
+  }
+
+  .mn-profile-page .mn-profile-sort-control :is(a, button) {
+    height: 36px !important;
+    min-width: 44px;
+    padding-inline: 12px !important;
+  }
+
+  .mn-profile-page .mn-profile-view-control button {
+    height: 36px !important;
+    width: 40px !important;
+  }
+
+  .mn-profile-page .mn-profile-meaning-toggle,
+  .mn-profile-page .mn-profile-edit-button {
+    min-height: 38px !important;
+    padding-inline: 14px !important;
+  }
+
+  .mn-repository-page-button,
+  .mn-word-card-stat-link {
+    min-height: 42px !important;
   }
 }

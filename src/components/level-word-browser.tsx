@@ -23,7 +23,12 @@ import {
   Volume2,
   X
 } from "lucide-react";
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent,
+  PointerEvent
+} from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -782,13 +787,20 @@ export function LevelWordBrowser({
 
   useEffect(() => {
     if (!selectedWordId) return;
+    if (isMobileCardGestureViewport() && openCards.length > 0) return;
 
+    let secondFrameId = 0;
     const frameId = window.requestAnimationFrame(() => {
-      focusLevelWordItem(selectedWordId);
+      secondFrameId = window.requestAnimationFrame(() => {
+        focusLevelWordItem(selectedWordId);
+      });
     });
 
-    return () => window.cancelAnimationFrame(frameId);
-  }, [activeCardId, selectedWordId, view]);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.cancelAnimationFrame(secondFrameId);
+    };
+  }, [activeCardId, openCards.length, selectedWordId, view]);
 
   const openLinkedWord = async (slug: string) => {
     const linkedWord = wordBySlug.get(slug) ?? linkedWordCache.current.get(slug);
@@ -1104,6 +1116,11 @@ function lockDocumentScroll(): DocumentScrollLock {
     scrollY = window.scrollY;
     html.classList.add("mn-memory-card-open");
     html.style.overflow = "hidden";
+    if (isMobileCardGestureViewport()) {
+      body.style.overflow = "hidden";
+      isLocked = true;
+      return;
+    }
     body.style.left = `-${scrollX}px`;
     body.style.overflow = "hidden";
     body.style.position = "fixed";
@@ -1147,9 +1164,22 @@ function lockDocumentScroll(): DocumentScrollLock {
 }
 
 function focusLevelWordItem(wordId: string) {
-  const wordElement = Array.from(
+  const matchingElements = Array.from(
     document.querySelectorAll<HTMLElement>("[data-level-word-id]")
-  ).find((element) => element.dataset.levelWordId === wordId);
+  ).filter((element) => element.dataset.levelWordId === wordId);
+  const wordElement =
+    matchingElements.find((element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      );
+    }) ??
+    matchingElements[0] ??
+    null;
   if (!wordElement) return;
 
   wordElement.focus({ preventScroll: true });
@@ -1248,8 +1278,10 @@ function isDocumentScrollKey(event: KeyboardEvent) {
   );
 }
 
+const mobileCardViewportQuery = "(max-width: 767px), (max-height: 560px) and (pointer: coarse)";
+
 function isMobileCardGestureViewport() {
-  return typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+  return typeof window !== "undefined" && window.matchMedia(mobileCardViewportQuery).matches;
 }
 
 const memoryCardViewportMargin = 16;
@@ -1969,12 +2001,53 @@ export function MemoryCardTray({
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !isMobileCardGestureViewport()) return;
+
+    const root = document.documentElement;
+    const visualViewport = window.visualViewport;
+    let frameId = 0;
+
+    const updateViewportVars = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        const viewport = window.visualViewport;
+        const viewportHeight = viewport?.height ?? window.innerHeight;
+        const offsetTop = viewport?.offsetTop ?? 0;
+        const offsetBottom = Math.max(0, window.innerHeight - viewportHeight - offsetTop);
+
+        root.style.setProperty("--mn-card-visual-height", `${viewportHeight}px`);
+        root.style.setProperty("--mn-card-visual-offset-top", `${offsetTop}px`);
+        root.style.setProperty("--mn-card-visual-offset-bottom", `${offsetBottom}px`);
+      });
+    };
+
+    updateViewportVars();
+    visualViewport?.addEventListener("resize", updateViewportVars);
+    visualViewport?.addEventListener("scroll", updateViewportVars);
+    window.addEventListener("resize", updateViewportVars);
+    window.addEventListener("orientationchange", updateViewportVars);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      visualViewport?.removeEventListener("resize", updateViewportVars);
+      visualViewport?.removeEventListener("scroll", updateViewportVars);
+      window.removeEventListener("resize", updateViewportVars);
+      window.removeEventListener("orientationchange", updateViewportVars);
+      root.style.removeProperty("--mn-card-visual-height");
+      root.style.removeProperty("--mn-card-visual-offset-top");
+      root.style.removeProperty("--mn-card-visual-offset-bottom");
+    };
+  }, []);
+
+  useEffect(() => {
     if (!activeCardId) return;
+    if (isMobileCardGestureViewport()) return;
     scrollLockRef.current?.runWithUnlockedPage(() => focusLevelWordItem(activeCardId));
   }, [activeCardId]);
 
   const tray = (
     <div
+      data-memory-card-tray="true"
       className={cn("pointer-events-auto fixed inset-0 z-50", overlayClassName)}
       onKeyDownCapture={handleTrayKeyDown}
     >
@@ -2079,6 +2152,9 @@ function MemoryCard({
   const [isBookmarkMenuOpen, setIsBookmarkMenuOpen] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>("idle");
   const [deletedHistory, setDeletedHistory] = useState<DeletedMnemonicCard[]>([]);
+  const [isMobileCardLayout, setIsMobileCardLayout] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(mobileCardViewportQuery).matches
+  );
   const [position, setPosition] = useState<MemoryCardPosition>({
     x: index * 30,
     y: index * 26
@@ -2186,6 +2262,15 @@ function MemoryCard({
       setActiveMnemonicId(mnemonicCards[0].id);
     }
   }, [activeMnemonicId, mnemonicCards]);
+
+  useLayoutEffect(() => {
+    const media = window.matchMedia(mobileCardViewportQuery);
+    const syncMobileLayout = () => setIsMobileCardLayout(media.matches);
+
+    syncMobileLayout();
+    media.addEventListener("change", syncMobileLayout);
+    return () => media.removeEventListener("change", syncMobileLayout);
+  }, []);
 
   useEffect(() => {
     if (!isEditingMeaning) setMeaningDraft(word.meaningCn || "");
@@ -2338,6 +2423,22 @@ function MemoryCard({
     }
     constrainPositionToViewport();
   };
+  const articleStyle: CSSProperties = isMobileCardLayout
+    ? {
+        bottom:
+          "calc(var(--mn-card-visual-offset-bottom, 0px) + var(--mn-mobile-card-edge-bottom, max(12px, env(safe-area-inset-bottom))))",
+        height: "auto",
+        left: "50%",
+        maxHeight: "none",
+        top:
+          "calc(var(--mn-card-visual-offset-top, 0px) + var(--mn-mobile-card-edge-top, max(10px, env(safe-area-inset-top))))",
+        transform: "translateX(-50%)",
+        zIndex: isActive ? 70 : 60 - index
+      }
+    : {
+        transform: `translate(calc(-50% + ${position.x}px), ${position.y}px)`,
+        zIndex: isActive ? 70 : 60 - index
+      };
   const handleMnemonicClick = async (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target instanceof Element ? event.target.closest("a") : null;
     const href = target?.getAttribute("href");
@@ -2908,10 +3009,7 @@ function MemoryCard({
         "mn-memory-card-panel pointer-events-auto fixed left-1/2 top-20 isolate flex max-h-[calc(100vh-7rem)] w-[min(640px,calc(100vw-32px))] flex-col overflow-hidden rounded-xl border border-[#e5e5e7] bg-white opacity-100 shadow-[0_24px_80px_rgba(23,26,31,0.16)] outline-none dark:border-border dark:bg-[#1c1c1e]",
         isWhiteCard && "mn-memory-card-panel-white"
       )}
-      style={{
-        transform: `translate(calc(-50% + ${position.x}px), ${position.y}px)`,
-        zIndex: isActive ? 70 : 60 - index
-      }}
+      style={articleStyle}
       onPointerDown={() => onActivate()}
       onKeyDownCapture={handleCardKeyDown}
     >
@@ -3186,6 +3284,12 @@ function MemoryCard({
                 <button
                   type="button"
                   onPointerDown={(event) => event.stopPropagation()}
+                  onPointerUp={(event) => {
+                    if (event.pointerType === "mouse") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onClose();
+                  }}
                   onClick={(event) => {
                     event.stopPropagation();
                     onClose();

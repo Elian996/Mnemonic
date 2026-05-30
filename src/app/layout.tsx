@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
 import "./globals.css";
 import { DeviceModeProvider } from "@/components/device-mode-provider";
@@ -9,6 +9,12 @@ import { getSessionUser } from "@/lib/auth/session";
 export const metadata: Metadata = {
   title: "mnemonic | 用词链记住英语单词",
   description: "一个面向中文学习者的英语单词助记、词链和记忆节点系统。"
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover"
 };
 
 export const dynamic = "force-dynamic";

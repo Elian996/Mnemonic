@@ -7,7 +7,7 @@ type LoadingLineProps = {
 };
 
 export function LoadingLine({
-  label = "正在加载",
+  label = "Loading",
   className,
   trackClassName
 }: LoadingLineProps) {
@@ -22,7 +22,7 @@ export function LoadingLine({
 }
 
 export function InlineLoadingLine({
-  label = "正在加载",
+  label = "Loading",
   className,
   trackClassName
 }: LoadingLineProps) {
@@ -41,26 +41,21 @@ type LoadingBoxProps = LoadingLineProps & {
 };
 
 export function LoadingBox({
-  label = "正在加载",
-  description,
+  label = "Loading",
   className,
   trackClassName
 }: LoadingBoxProps) {
   return (
     <div className={cn("mn-loading-box", className)} role="status" aria-label={label}>
-      <div className="mn-loading-box-copy">
-        <span className="mn-loading-box-label">{label}</span>
-        {description ? <span className="mn-loading-box-description">{description}</span> : null}
-      </div>
       <LoadingLine label={label} trackClassName={trackClassName} />
     </div>
   );
 }
 
-export function LoadingOverlay({ label = "正在加载", description }: Pick<LoadingBoxProps, "label" | "description">) {
+export function LoadingOverlay({ label = "Loading" }: Pick<LoadingBoxProps, "label" | "description">) {
   return (
     <div className="mn-loading-overlay" role="status" aria-label={label}>
-      <LoadingBox label={label} description={description} />
+      <LoadingBox label={label} />
     </div>
   );
 }

@@ -61,6 +61,11 @@ type RepositorySearchParams = {
 const pageSize = 120;
 const aiExtensionReviewPageSize = 120;
 const aiGeneratedWordCardPageSize = 120;
+const repositoryOverviewCacheTtlMs = 30_000;
+
+type RepositoryCacheEntry = { expiresAt: number; value: unknown };
+
+const repositoryPageCache = new Map<string, RepositoryCacheEntry>();
 
 const sortLabels: Record<string, string> = {
   recent: "最近添加",
@@ -128,12 +133,28 @@ export default async function RepositoryPage({
     wordCardStats,
     accountDetails
   ] = await Promise.all([
-    canUseAiExtensionReview ? getAiExtensionReviewCount() : Promise.resolve(0),
-    canUseAiGeneratedWordCards ? getAiGeneratedWordCardCount() : Promise.resolve(0),
-    canUseAiExtensionReview ? getLabelArtifactCleanupWordIds() : Promise.resolve([]),
-    canUseAiExtensionReview ? getScannedAiRepairPack002WordIds() : Promise.resolve([]),
-    getAdminCenterOverview(),
-    getWordCardStats(),
+    canUseAiExtensionReview
+      ? isAiExtensionReviewScope
+        ? getAiExtensionReviewCount()
+        : getCachedRepositoryValue("ai-extension-count", () => getAiExtensionReviewCount())
+      : Promise.resolve(0),
+    canUseAiGeneratedWordCards
+      ? isAiGeneratedWordCardsScope
+        ? getAiGeneratedWordCardCount()
+        : getCachedRepositoryValue("ai-generated-word-card-count", () => getAiGeneratedWordCardCount())
+      : Promise.resolve(0),
+    canUseAiExtensionReview
+      ? scope === labelArtifactCleanupScope
+        ? getLabelArtifactCleanupWordIds()
+        : getCachedRepositoryValue("label-artifact-cleanup-word-ids", () => getLabelArtifactCleanupWordIds())
+      : Promise.resolve([]),
+    canUseAiExtensionReview
+      ? scope === scannedAiRepairPack002Scope
+        ? getScannedAiRepairPack002WordIds()
+        : getCachedRepositoryValue("scanned-ai-repair-pack002-word-ids", () => getScannedAiRepairPack002WordIds())
+      : Promise.resolve([]),
+    getCachedRepositoryValue("admin-center-overview", () => getAdminCenterOverview()),
+    getCachedRepositoryValue("word-card-stats", () => getWordCardStats()),
     selectedAccountDetail ? getAdminAccountDetails(selectedAccountDetail) : Promise.resolve(null)
   ]);
 
@@ -971,6 +992,16 @@ async function getAdminCenterOverview() {
     pendingUserPublicCards,
     approvedUserPublicCards
   };
+}
+
+async function getCachedRepositoryValue<T>(key: string, loader: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const cached = repositoryPageCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.value as T;
+
+  const value = await loader();
+  repositoryPageCache.set(key, { expiresAt: now + repositoryOverviewCacheTtlMs, value });
+  return value;
 }
 
 async function getAdminAccountDetails(mode: AccountDetailMode) {

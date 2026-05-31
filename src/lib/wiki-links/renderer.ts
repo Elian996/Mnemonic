@@ -53,6 +53,10 @@ export async function renderMnemonicMarkdown(markdown: string) {
   return preferDisplayUploadImages(sanitized);
 }
 
+export async function prepareMnemonicHtmlForDisplay(html: string) {
+  return preferDisplayUploadImages(html);
+}
+
 export function markdownToPlainText(markdown: string) {
   return replaceWikiLinks(markdown, (link) => link.label)
     .replace(/[#>*_`~\-]/g, " ")

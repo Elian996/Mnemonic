@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
 import { canEditMnemonic, canViewMnemonic, hasRole } from "@/lib/permissions";
-import { markdownToPlainText, renderMnemonicMarkdown } from "@/lib/wiki-links/renderer";
+import { markdownToPlainText, prepareMnemonicHtmlForDisplay, renderMnemonicMarkdown } from "@/lib/wiki-links/renderer";
 import { ensureWordNode, syncEntryWikiLinks } from "@/lib/wiki-links/resolve";
 import { vocabCategories } from "@/lib/vocab-categories";
 
@@ -796,7 +796,7 @@ async function toWordCardPayload(word: WordCardRecord, user: Pick<User, "id" | "
       title: entry.title,
       splitText: entry.splitText || "",
       contentMarkdown: entry.contentMarkdown,
-      contentHtml: entry.contentHtml || (await renderMnemonicMarkdown(entry.contentMarkdown)),
+      contentHtml: await mnemonicContentHtmlForDisplay(entry.contentHtml, entry.contentMarkdown),
       plainText: entry.plainText,
       sourceType: entry.sourceType,
       status: entry.status,
@@ -828,6 +828,13 @@ async function toWordCardPayload(word: WordCardRecord, user: Pick<User, "id" | "
     mnemonic: mnemonics[0] ?? null,
     mnemonics
   };
+}
+
+async function mnemonicContentHtmlForDisplay(contentHtml: string | null, contentMarkdown: string) {
+  const storedHtml = contentHtml?.trim();
+  if (!storedHtml) return renderMnemonicMarkdown(contentMarkdown);
+  if (!/<img[\s>]/i.test(storedHtml)) return storedHtml;
+  return prepareMnemonicHtmlForDisplay(storedHtml);
 }
 
 function revalidateWordSurfaces(word: { slug: string; levelTags?: string[] }) {

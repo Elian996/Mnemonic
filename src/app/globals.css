@@ -115,8 +115,52 @@ html.mn-memory-card-open body {
 }
 
 .mn-loading-line {
+  display: block;
   width: min(420px, calc(100vw - 64px));
   color: var(--mn-text-muted);
+}
+
+.mn-loading-box {
+  width: min(460px, calc(100vw - 48px));
+  border: 1px solid var(--mn-border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mn-surface, #fff) 92%, transparent);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+  padding: 20px;
+  color: var(--mn-text);
+}
+
+.mn-loading-box-copy {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.mn-loading-box-label {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.mn-loading-box-description {
+  color: var(--mn-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mn-loading-box .mn-loading-line {
+  width: 100%;
+}
+
+.mn-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--mn-bg, #f8f5ee) 62%, transparent);
+  backdrop-filter: blur(6px);
 }
 
 .mn-loading-line-track {
@@ -7954,6 +7998,35 @@ html[data-theme="dark"] .mn-repository-notice {
   color: #9de4c4;
 }
 
+.mn-repository-pack-runtime-notice {
+  margin-top: 16px;
+}
+
+.mn-repository-word-card-removing {
+  opacity: 0.48;
+  pointer-events: none;
+}
+
+.mn-repository-card-loading {
+  position: absolute;
+  inset: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: stretch;
+  pointer-events: none;
+}
+
+.mn-repository-card-loading .mn-loading-box {
+  width: 100%;
+  padding: 12px;
+  background: color-mix(in srgb, var(--mn-surface, #fff) 96%, transparent);
+}
+
+.mn-repository-card-loading .mn-loading-box-copy {
+  margin-bottom: 8px;
+}
+
 .mn-admin-overview {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -8441,7 +8514,13 @@ html[data-theme="dark"] .mn-repository-notice {
 .mn-repository-global-search-loading {
   margin-left: auto;
   flex: 0 0 auto;
+  width: 52px;
   color: var(--mn-text-muted);
+}
+
+.mn-repository-global-search-loading-line {
+  margin: 10px 12px 12px;
+  width: auto;
 }
 
 .mn-repository-control-row {

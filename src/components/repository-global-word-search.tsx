@@ -1,7 +1,8 @@
 "use client";
 
-import { Loader2, Search, X } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { InlineLoadingLine } from "@/components/loading-line";
 import {
   LOGIN_REQUIRED_INTERACTION_MESSAGE,
   LoginRequiredPrompt
@@ -272,7 +273,7 @@ export function RepositoryGlobalWordSearch({
     <>
       <div ref={wrapperRef} className="mn-repository-search-field mn-repository-global-search">
         <span className="mn-repository-global-search-icon" aria-hidden="true">
-          {status === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+          <Search className="h-4 w-4" />
         </span>
         <label className="sr-only" htmlFor="repository-global-word-search">
           搜索全部单词
@@ -340,7 +341,7 @@ export function RepositoryGlobalWordSearch({
                           </span>
                         ) : null}
                         {isOpening ? (
-                          <Loader2 className="mn-repository-global-search-loading h-3.5 w-3.5 animate-spin" />
+                          <InlineLoadingLine label={`正在打开 ${word.word}`} className="mn-repository-global-search-loading" />
                         ) : null}
                       </span>
                       <span className="mn-repository-global-search-meaning">
@@ -351,6 +352,7 @@ export function RepositoryGlobalWordSearch({
                 })}
               </div>
             ) : null}
+            {status === "loading" ? <InlineLoadingLine label="正在搜索" className="mn-repository-global-search-loading-line" /> : null}
           </div>
         ) : null}
       </div>

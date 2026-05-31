@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { RepositoryBulkDeleteList } from "@/components/repository-bulk-delete-list";
 import { RepositoryDeleteButton } from "@/components/repository-delete-button";
+import { RepositoryPackRemoveNotice } from "@/components/repository-pack-remove-notice";
 import { RepositoryKeyboardController } from "@/components/repository-keyboard-controller";
 import { RepositoryGlobalWordSearch } from "@/components/repository-global-word-search";
 import { WordCardPopupButton } from "@/components/word-card-popup-button";
@@ -372,6 +373,8 @@ export default async function RepositoryPage({
             已从词包移出 {removedFromPackCount} 个单词。单词和单词卡仍然保留。
           </div>
         ) : null}
+
+        {!isSpecialDraftScope ? <RepositoryPackRemoveNotice /> : null}
 
         {!isSpecialDraftScope ? (
           <form className="mn-repository-toolbar" action="/repository">

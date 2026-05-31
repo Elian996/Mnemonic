@@ -1,10 +1,12 @@
 "use client";
 
 import { CheckSquare, Square, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { LoadingOverlay } from "@/components/loading-line";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WordCardPopupButton } from "@/components/word-card-popup-button";
+import { REPOSITORY_PACK_REMOVE_EVENT } from "@/lib/repository-pack-events";
 import { cn } from "@/lib/utils";
 
 export type RepositoryBulkDeleteWord = {
@@ -37,16 +39,24 @@ export function RepositoryBulkDeleteList({
   mode?: "delete" | "removeFromPack";
   packScope?: string;
 }) {
+  const [visibleWords, setVisibleWords] = useState(words);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [isRemovingFromPack, setIsRemovingFromPack] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const isRemoveFromPack = mode === "removeFromPack";
   const selectedWords = useMemo(
-    () => words.filter((word) => selectedIds.has(word.id)),
-    [selectedIds, words]
+    () => visibleWords.filter((word) => selectedIds.has(word.id)),
+    [selectedIds, visibleWords]
   );
-  const allSelected = words.length > 0 && selectedIds.size === words.length;
+  const allSelected = visibleWords.length > 0 && selectedIds.size === visibleWords.length;
+
+  useEffect(() => {
+    setVisibleWords(words);
+    setSelectedIds(new Set());
+  }, [words]);
 
   const setAll = (checked: boolean) => {
-    setSelectedIds(checked ? new Set(words.map((word) => word.id)) : new Set());
+    setSelectedIds(checked ? new Set(visibleWords.map((word) => word.id)) : new Set());
   };
 
   const toggleWord = (wordId: string, checked: boolean) => {
@@ -59,6 +69,39 @@ export function RepositoryBulkDeleteList({
       }
       return next;
     });
+  };
+
+  const removeSelectedFromPack = async () => {
+    if (!packScope || isRemovingFromPack || !selectedWords.length) return;
+    setIsRemovingFromPack(true);
+    setErrorMessage("");
+
+    try {
+      const response = await fetch("/api/repository/word-pack-exclusions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ packScope, wordIds: selectedWords.map((word) => word.id) })
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        removedCount?: number;
+        removedWordIds?: string[];
+      };
+      if (!response.ok) throw new Error(result.error || "移出词包失败。");
+
+      const removedIds = new Set(result.removedWordIds?.length ? result.removedWordIds : selectedWords.map((word) => word.id));
+      setVisibleWords((current) => current.filter((word) => !removedIds.has(word.id)));
+      setSelectedIds(new Set());
+      window.dispatchEvent(
+        new CustomEvent(REPOSITORY_PACK_REMOVE_EVENT, {
+          detail: { count: result.removedCount || removedIds.size, packScope }
+        })
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "移出词包失败。");
+    } finally {
+      setIsRemovingFromPack(false);
+    }
   };
 
   return (
@@ -78,32 +121,45 @@ export function RepositoryBulkDeleteList({
           : `确认删除 ${selectedWords.length} 个单词吗？\n${preview}${suffix}\n\n这个操作会同时删除它们的记忆方法和链接。`;
         if (!window.confirm(message)) {
           event.preventDefault();
+          return;
+        }
+
+        if (isRemoveFromPack) {
+          event.preventDefault();
+          void removeSelectedFromPack();
         }
       }}
       className="mn-level-word-list mt-5 overflow-hidden rounded-lg border border-[#d8dde6] bg-white dark:border-border dark:bg-card"
     >
+      {isRemovingFromPack ? <LoadingOverlay label="正在移出词包" description="单词和单词卡会保留" /> : null}
       <input type="hidden" name="returnTo" value={returnTo} />
       {packScope ? <input type="hidden" name="packScope" value={packScope} /> : null}
       <div className="mn-repository-bulk-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-black/5 bg-white/95 px-5 py-4 sm:px-7">
         <div className="mn-repository-bulk-actions flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" className="rounded-full" onClick={() => setAll(!allSelected)} disabled={!words.length}>
+          <Button type="button" variant="outline" className="rounded-full" onClick={() => setAll(!allSelected)} disabled={!visibleWords.length || isRemovingFromPack}>
             {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
             {allSelected ? "已全选本页" : "全选本页"}
           </Button>
-          <Button type="button" variant="ghost" className="rounded-full" onClick={() => setAll(false)} disabled={!selectedWords.length}>
+          <Button type="button" variant="ghost" className="rounded-full" onClick={() => setAll(false)} disabled={!selectedWords.length || isRemovingFromPack}>
             取消勾选
           </Button>
           <span className="text-sm font-semibold text-[#6e6e73]">
-            已选 {selectedWords.length} / {words.length}
+            已选 {selectedWords.length} / {visibleWords.length}
           </span>
         </div>
-        <Button type="submit" variant={isRemoveFromPack ? "outline" : "destructive"} className="rounded-full" disabled={!selectedWords.length}>
+        <Button type="submit" variant={isRemoveFromPack ? "outline" : "destructive"} className="rounded-full" disabled={!selectedWords.length || isRemovingFromPack}>
           <Trash2 className="h-4 w-4" />
           {isRemoveFromPack ? "移出已选" : "删除已选"}
         </Button>
       </div>
 
-      {words.map((word) => {
+      {errorMessage ? (
+        <div className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700">
+          {errorMessage}
+        </div>
+      ) : null}
+
+      {visibleWords.map((word) => {
         const selected = selectedIds.has(word.id);
         return (
           <div

@@ -3283,14 +3283,14 @@ function MemoryCard({
                 )}
                 <button
                   type="button"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onPointerUp={(event) => {
-                    if (event.pointerType === "mouse") return;
-                    event.preventDefault();
+                  onPointerDown={(event) => {
                     event.stopPropagation();
-                    onClose();
+                  }}
+                  onPointerUp={(event) => {
+                    event.stopPropagation();
                   }}
                   onClick={(event) => {
+                    event.preventDefault();
                     event.stopPropagation();
                     onClose();
                   }}

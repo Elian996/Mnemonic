@@ -9,9 +9,14 @@ import { getAiExtensionReviewCount, getAiExtensionReviewItems } from "@/lib/ai-e
 import { getAiGeneratedWordCardCount, getAiGeneratedWordCardItems } from "@/lib/ai-generated-word-cards";
 import {
   glareLikeLogicReviewWords,
+  isRepositoryWordPackScope,
   labelArtifactCleanupAuditAction,
   labelArtifactCleanupPackExcludeAction,
-  labelArtifactCleanupScope
+  labelArtifactCleanupScope,
+  scannedAiRepairPack002AuditAction,
+  scannedAiRepairPack002ExtraWords,
+  scannedAiRepairPack002PackExcludeAction,
+  scannedAiRepairPack002Scope
 } from "@/lib/repository-word-pack";
 import { cn } from "@/lib/utils";
 import { vocabCategories, type VocabCategory } from "@/lib/vocab-categories";
@@ -62,6 +67,7 @@ const baseScopeLabels: Record<string, string> = {
 const scopeLabels: Record<string, string> = {
   ...baseScopeLabels,
   [labelArtifactCleanupScope]: "OCR/逻辑清理词包",
+  [scannedAiRepairPack002Scope]: "单词包002",
   aiExtensionReview: "AI延伸审核",
   aiGeneratedWordCards: "AI生成单词卡"
 };
@@ -104,6 +110,7 @@ export default async function RepositoryPage({
   const aiExtensionReviewCount = canUseAiExtensionReview ? await getAiExtensionReviewCount() : 0;
   const aiGeneratedWordCardCount = canUseAiGeneratedWordCards ? await getAiGeneratedWordCardCount() : 0;
   const labelArtifactCleanupWordIds = canUseAiExtensionReview ? await getLabelArtifactCleanupWordIds() : [];
+  const scannedAiRepairPack002WordIds = canUseAiExtensionReview ? await getScannedAiRepairPack002WordIds() : [];
   const adminOverview = await getAdminCenterOverview();
   const wordCardStats = await getWordCardStats();
   const selectedLevelCategory = getRepositoryLevelCategory(params.level);
@@ -121,6 +128,9 @@ export default async function RepositoryPage({
     if (scope === "withCards") return { mnemonicEntries: { some: activeMnemonicEntryWhere } };
     if (scope === labelArtifactCleanupScope) {
       return labelArtifactCleanupWordIds.length ? { id: { in: labelArtifactCleanupWordIds } } : { id: "__empty__" };
+    }
+    if (scope === scannedAiRepairPack002Scope) {
+      return scannedAiRepairPack002WordIds.length ? { id: { in: scannedAiRepairPack002WordIds } } : { id: "__empty__" };
     }
     if (scope === "aiExtensionReview") {
       return { id: "__empty__" };
@@ -151,6 +161,7 @@ export default async function RepositoryPage({
   const aiGeneratedWordCardItems = canUseAiGeneratedWordCards
     ? await getAiGeneratedWordCardItems(aiGeneratedWordCardPageSize, isAiGeneratedWordCardsScope ? (currentPage - 1) * aiGeneratedWordCardPageSize : 0)
     : [];
+  const isRemovableWordPackScope = isRepositoryWordPackScope(scope);
   const words = isSpecialDraftScope
     ? []
     : await prisma.word.findMany({
@@ -215,6 +226,7 @@ export default async function RepositoryPage({
             {canUseAiExtensionReview ? <span>{aiExtensionReviewCount.toLocaleString("zh-CN")} 个 AI 延伸待审</span> : null}
             {canUseAiGeneratedWordCards ? <span>{aiGeneratedWordCardCount.toLocaleString("zh-CN")} 张 AI 生成单词卡</span> : null}
             {canUseAiExtensionReview ? <span>{labelArtifactCleanupWordIds.length.toLocaleString("zh-CN")} 个 OCR/逻辑词</span> : null}
+            {canUseAiExtensionReview ? <span>单词包002 {scannedAiRepairPack002WordIds.length.toLocaleString("zh-CN")} 词</span> : null}
             <span>第 {currentPage} / {totalPages} 页</span>
           </div>
         </header>
@@ -295,6 +307,15 @@ export default async function RepositoryPage({
               value={labelArtifactCleanupWordIds.length}
               detail="glare 同批及相似逻辑复查"
               href={`${hrefFor({ q: "", sort: "az", view: "grid", reveal: "1", scope: labelArtifactCleanupScope, level: "", page: "1" })}#word-list`}
+              icon={<BookOpenCheck className="h-4 w-4" />}
+            />
+          ) : null}
+          {canUseAiExtensionReview ? (
+            <WordCardStat
+              label="单词包002"
+              value={scannedAiRepairPack002WordIds.length}
+              detail="扫描/OCR污染后修复卡"
+              href={`${hrefFor({ q: "", sort: "az", view: "grid", reveal: "1", scope: scannedAiRepairPack002Scope, level: "", page: "1" })}#word-list`}
               icon={<BookOpenCheck className="h-4 w-4" />}
             />
           ) : null}
@@ -444,8 +465,8 @@ export default async function RepositoryPage({
                       id={word.id}
                       word={word.word}
                       returnTo={listReturnTo}
-                      mode={scope === labelArtifactCleanupScope ? "removeFromPack" : "delete"}
-                      packScope={scope === labelArtifactCleanupScope ? labelArtifactCleanupScope : undefined}
+                      mode={isRemovableWordPackScope ? "removeFromPack" : "delete"}
+                      packScope={isRemovableWordPackScope ? scope : undefined}
                     />
                   </div>
                 </div>
@@ -485,9 +506,9 @@ export default async function RepositoryPage({
               statusLabel: word._count.mnemonicEntries ? "正文" : "待补全"
             }))}
             returnTo={listReturnTo}
-            bulkDeleteAction={scope === labelArtifactCleanupScope ? bulkRemoveWordsFromRepositoryPackAction : bulkDeleteWordsFromRepositoryAction}
-            mode={scope === labelArtifactCleanupScope ? "removeFromPack" : "delete"}
-            packScope={scope === labelArtifactCleanupScope ? labelArtifactCleanupScope : undefined}
+            bulkDeleteAction={isRemovableWordPackScope ? bulkRemoveWordsFromRepositoryPackAction : bulkDeleteWordsFromRepositoryAction}
+            mode={isRemovableWordPackScope ? "removeFromPack" : "delete"}
+            packScope={isRemovableWordPackScope ? scope : undefined}
             isAuthenticated={Boolean(user)}
             defaultUserCardVisibility={user?.defaultPublicMnemonics ? "public" : "private"}
             canEditOfficialCards={canEditOfficialCards}
@@ -1059,6 +1080,43 @@ async function getLabelArtifactCleanupWordIds() {
   if (!cleanupWords.length) return [];
   const words = await prisma.word.findMany({
     where: { word: { in: cleanupWords } },
+    select: { id: true }
+  });
+  return words.map((word) => word.id).filter((wordId) => !excludedWordIds.has(wordId));
+}
+
+async function getScannedAiRepairPack002WordIds() {
+  const [logs, exclusionLogs] = await Promise.all([
+    prisma.auditLog.findMany({
+      where: {
+        action: scannedAiRepairPack002AuditAction,
+        entityType: "MnemonicEntry"
+      },
+      select: { metadataJson: true },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.auditLog.findMany({
+      where: {
+        action: scannedAiRepairPack002PackExcludeAction,
+        entityType: "Word"
+      },
+      select: { entityId: true }
+    })
+  ]);
+  const excludedWordIds = new Set(exclusionLogs.map((log) => log.entityId));
+  const packWords = [
+    ...new Set(
+      [
+        ...scannedAiRepairPack002ExtraWords,
+        ...logs
+          .map((log) => wordFromAuditMetadata(log.metadataJson))
+          .filter((word): word is string => Boolean(word))
+      ]
+    )
+  ];
+  if (!packWords.length) return [];
+  const words = await prisma.word.findMany({
+    where: { word: { in: packWords } },
     select: { id: true }
   });
   return words.map((word) => word.id).filter((wordId) => !excludedWordIds.has(wordId));

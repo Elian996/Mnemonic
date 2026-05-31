@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db";
 import { createSession, destroySession } from "@/lib/auth/session";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { consumeEmailVerificationCode, requestEmailVerificationCode, verificationErrorParam } from "@/lib/auth/email-verification";
+import { registerUrlWithState } from "@/lib/return-path";
 import { emailVerificationRequestSchema, loginSchema, passwordResetSchema, registerSchema } from "@/lib/validators";
 
 export async function loginAction(formData: FormData) {
@@ -29,19 +30,20 @@ export async function loginAction(formData: FormData) {
 }
 
 export async function registerAction(formData: FormData) {
+  const redirectTo = safeRedirectPath(formData.get("next"));
   const parsed = registerSchema.safeParse({
     email: normalizeEmail(formData.get("email")),
     displayName: normalizeText(formData.get("displayName")),
     password: formData.get("password"),
     verificationCode: normalizeText(formData.get("verificationCode"))
   });
-  if (!parsed.success) redirect("/register?error=invalid");
+  if (!parsed.success) redirect(registerUrl("invalid", "", redirectTo));
 
   const existingEmail = await prisma.user.findUnique({
     where: { email: parsed.data.email },
     select: { id: true }
   });
-  if (existingEmail) redirect(registerUrl("duplicate", parsed.data.email));
+  if (existingEmail) redirect(registerUrl("duplicate", parsed.data.email, redirectTo));
 
   const verificationResult = await consumeEmailVerificationCode({
     email: parsed.data.email,
@@ -49,7 +51,7 @@ export async function registerAction(formData: FormData) {
     code: parsed.data.verificationCode
   });
   if (verificationResult !== "valid") {
-    redirect(registerUrl(verificationErrorParam(verificationResult), parsed.data.email));
+    redirect(registerUrl(verificationErrorParam(verificationResult), parsed.data.email, redirectTo));
   }
 
   let user;
@@ -65,35 +67,36 @@ export async function registerAction(formData: FormData) {
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      redirect(registerUrl("duplicate", parsed.data.email));
+      redirect(registerUrl("duplicate", parsed.data.email, redirectTo));
     }
     throw error;
   }
 
   await createSession(user.id);
-  redirect("/me");
+  redirect(redirectTo);
 }
 
 export async function requestRegisterCodeAction(formData: FormData) {
+  const redirectTo = safeRedirectPath(formData.get("next"));
   const parsed = emailVerificationRequestSchema.safeParse({
     email: normalizeEmail(formData.get("email"))
   });
-  if (!parsed.success) redirect("/register?error=invalid_email");
+  if (!parsed.success) redirect(registerUrl("invalid_email", "", redirectTo));
 
   const existingEmail = await prisma.user.findUnique({
     where: { email: parsed.data.email },
     select: { id: true }
   });
-  if (existingEmail) redirect(registerUrl("duplicate", parsed.data.email));
+  if (existingEmail) redirect(registerUrl("duplicate", parsed.data.email, redirectTo));
 
   const result = await requestEmailVerificationCode({
     email: parsed.data.email,
     purpose: "REGISTER",
     ip: await requestIp()
   });
-  if (result === "rate_limited") redirect(registerUrl("rate_limited", parsed.data.email));
-  if (result === "send_failed") redirect(registerUrl("send_failed", parsed.data.email));
-  redirect(registerUrl("sent", parsed.data.email));
+  if (result === "rate_limited") redirect(registerUrl("rate_limited", parsed.data.email, redirectTo));
+  if (result === "send_failed") redirect(registerUrl("send_failed", parsed.data.email, redirectTo));
+  redirect(registerUrl("sent", parsed.data.email, redirectTo));
 }
 
 export async function requestPasswordResetCodeAction(formData: FormData) {
@@ -197,10 +200,8 @@ function loginUrl(error: "invalid" | "suspended", next: string) {
   return `/login?${params.toString()}`;
 }
 
-function registerUrl(error: string, email: string) {
-  const params = new URLSearchParams({ error });
-  if (email) params.set("email", email);
-  return `/register?${params.toString()}`;
+function registerUrl(error: string, email: string, next = "/me") {
+  return registerUrlWithState(error, email, next);
 }
 
 function passwordResetUrl(error: string, email: string) {

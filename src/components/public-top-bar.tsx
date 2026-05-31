@@ -1,10 +1,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ArrowLeft, LogOut, UserRound } from "lucide-react";
+import { ArrowLeft, LogOut } from "lucide-react";
 import { logoutAction } from "@/lib/auth/actions";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MemoryCardFontToggle } from "@/components/memory-card-font-toggle";
 import { UsageManualButton } from "@/components/usage-manual-button";
+import { AccountNavLink } from "@/components/account-nav-link";
 
 type PublicUser = {
   displayName: string;
@@ -71,14 +72,10 @@ export function PublicTopBar({
           <MemoryCardFontToggle />
           <UsageManualButton autoOpen={!user} />
           {actionsSlot}
-          <Link
-            href={user ? "/me" : "/login"}
-            aria-label={user ? "个人中心" : "登录"}
-            title={user ? "个人中心" : "登录"}
+          <AccountNavLink
+            isAuthenticated={Boolean(user)}
             className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] text-[var(--mn-ink)] transition hover:border-[var(--mn-ink)]"
-          >
-            <UserRound className="h-4 w-4" />
-          </Link>
+          />
           {user ? (
             <form action={logoutAction}>
               <button

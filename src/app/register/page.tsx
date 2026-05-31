@@ -1,17 +1,25 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { registerAction, requestRegisterCodeAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
 import { InteriorPage } from "@/components/interior-shell";
+import { authUrlWithNext, pathFromReferer, safeInternalPath } from "@/lib/return-path";
 
 export default async function RegisterPage({
   searchParams
 }: {
-  searchParams: Promise<{ email?: string; error?: string }>;
+  searchParams: Promise<{ email?: string; error?: string; next?: string }>;
 }) {
-  const [user, sp] = await Promise.all([getSessionUser(), searchParams]);
+  const [user, sp, headerStore] = await Promise.all([getSessionUser(), searchParams, headers()]);
   if (user) redirect("/me");
+  const requestedNext = safeInternalPath(sp.next);
+  const refererPath = pathFromReferer(headerStore.get("referer"), headerStore.get("host"));
+  const next = requestedNext || refererPath || "/me";
+  const returnHref = requestedNext || refererPath || "/";
+  const returnLabel = returnHref === "/" ? "首页" : "返回上级";
   const errorMessage = registerErrorMessage(sp.error);
   const email = safeEmailParam(sp.email);
   const successMessage = sp.error === "sent" ? "验证码已发送，请查看邮箱。" : "";
@@ -19,12 +27,13 @@ export default async function RegisterPage({
   return (
     <InteriorPage>
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-5 sm:px-8">
-        <Link href="/" className="text-xs font-bold text-[var(--mn-muted)] transition hover:text-[var(--mn-ink)]">
-          首页
+        <Link href={returnHref} className="inline-flex items-center gap-2 text-xs font-bold text-[var(--mn-muted)] transition hover:text-[var(--mn-ink)]">
+          {returnHref === "/" ? null : <ArrowLeft className="h-3.5 w-3.5" aria-hidden />}
+          {returnLabel}
         </Link>
         <div className="flex items-center gap-2">
           <ThemeToggle />
-          <Link href="/login" className="rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--mn-ink)]">
+          <Link href={authUrlWithNext("/login", next)} className="rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--mn-ink)]">
             登录
           </Link>
         </div>
@@ -35,6 +44,7 @@ export default async function RegisterPage({
           <p className="mn-kicker">account</p>
           <h1 className="mt-3 font-serif text-5xl font-semibold tracking-normal">注册</h1>
           <form action={registerAction} className="mt-6 grid gap-4">
+            <input type="hidden" name="next" value={next} />
             <label className="grid gap-2 text-sm font-semibold text-[var(--mn-ink)]">
               邮箱
               <input

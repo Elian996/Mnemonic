@@ -9,7 +9,7 @@ import { nodeSlug, slugify } from "@/lib/slug";
 import { wordSchema } from "@/lib/validators";
 import { ensureWordNode } from "@/lib/wiki-links/resolve";
 import { vocabCategoryByTag } from "@/lib/vocab-categories";
-import { labelArtifactCleanupPackExcludeAction, labelArtifactCleanupScope } from "@/lib/repository-word-pack";
+import { repositoryWordPackExcludeActionForScope } from "@/lib/repository-word-pack";
 
 export async function saveWordAction(formData: FormData) {
   const user = await requireRole(UserRole.EDITOR);
@@ -132,12 +132,14 @@ export async function removeWordFromRepositoryPackAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   const packScope = String(formData.get("packScope") ?? "");
   const returnTo = repositoryReturnTarget(String(formData.get("returnTo") ?? ""));
-  if (packScope !== labelArtifactCleanupScope) redirect(returnTo);
+  const excludeAction = repositoryWordPackExcludeActionForScope(packScope);
+  if (!excludeAction) redirect(returnTo);
 
   const removedCount = await recordRepositoryPackExclusions({
     actorId: user.id,
     wordIds: [id],
-    packScope
+    packScope,
+    excludeAction
   });
   revalidatePath("/repository");
   redirect(withRemovedFromPackFlag(returnTo, removedCount));
@@ -147,7 +149,8 @@ export async function bulkRemoveWordsFromRepositoryPackAction(formData: FormData
   const user = await requireRole(UserRole.ADMIN);
   const packScope = String(formData.get("packScope") ?? "");
   const returnTo = repositoryReturnTarget(String(formData.get("returnTo") ?? ""));
-  if (packScope !== labelArtifactCleanupScope) redirect(returnTo);
+  const excludeAction = repositoryWordPackExcludeActionForScope(packScope);
+  if (!excludeAction) redirect(returnTo);
 
   const ids = uniqueStrings(formData.getAll("wordId").map(String));
   if (!ids.length) redirect(returnTo);
@@ -155,7 +158,8 @@ export async function bulkRemoveWordsFromRepositoryPackAction(formData: FormData
   const removedCount = await recordRepositoryPackExclusions({
     actorId: user.id,
     wordIds: ids,
-    packScope
+    packScope,
+    excludeAction
   });
   revalidatePath("/repository");
   redirect(withRemovedFromPackFlag(returnTo, removedCount));
@@ -191,11 +195,13 @@ function uniqueStrings(values: string[]) {
 async function recordRepositoryPackExclusions({
   actorId,
   wordIds,
-  packScope
+  packScope,
+  excludeAction
 }: {
   actorId: string;
   wordIds: string[];
   packScope: string;
+  excludeAction: string;
 }) {
   const ids = uniqueStrings(wordIds);
   if (!ids.length) return 0;
@@ -206,7 +212,7 @@ async function recordRepositoryPackExclusions({
   if (!words.length) return 0;
   const existingLogs = await prisma.auditLog.findMany({
     where: {
-      action: labelArtifactCleanupPackExcludeAction,
+      action: excludeAction,
       entityType: "Word",
       entityId: { in: words.map((word) => word.id) }
     },
@@ -221,7 +227,7 @@ async function recordRepositoryPackExclusions({
       prisma.auditLog.create({
         data: {
           actorId,
-          action: labelArtifactCleanupPackExcludeAction,
+          action: excludeAction,
           entityType: "Word",
           entityId: word.id,
           metadataJson: {

@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { authUrlWithNext, safeReturnPath } from "@/lib/return-path";
 
 export const LOGIN_REQUIRED_INTERACTION_MESSAGE =
   "已临时保存在本机。未登录数据可能会丢失，登录或注册后可合并到账号。";
@@ -19,6 +21,13 @@ export function LoginRequiredPrompt({
   className?: string;
   autoDismissMs?: number;
 }) {
+  const pathname = usePathname() || "/";
+  const searchParams = useSearchParams();
+  const query = searchParams.toString();
+  const currentPath = safeReturnPath(`${pathname}${query ? `?${query}` : ""}`);
+  const loginHref = authUrlWithNext("/login", currentPath || "/me");
+  const registerHref = authUrlWithNext("/register", currentPath || "/me");
+
   useEffect(() => {
     if (!message || autoDismissMs <= 0) return;
     const timer = window.setTimeout(onClose, autoDismissMs);
@@ -39,10 +48,10 @@ export function LoginRequiredPrompt({
         <p className="min-w-0 flex-1 leading-5">
           {message}
           <span className="ml-2 inline-flex gap-2 whitespace-nowrap">
-            <Link href="/login" className="text-[#0057d8] hover:underline dark:text-blue-300">
+            <Link href={loginHref} className="text-[#0057d8] hover:underline dark:text-blue-300">
               登录
             </Link>
-            <Link href="/register" className="text-[#69717f] hover:underline dark:text-muted-foreground">
+            <Link href={registerHref} className="text-[#69717f] hover:underline dark:text-muted-foreground">
               注册
             </Link>
           </span>

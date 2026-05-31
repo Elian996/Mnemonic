@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   ArrowRight,
   BookMarked,
@@ -12,14 +13,21 @@ import {
 } from "lucide-react";
 import { MnemonicSourceType, MnemonicStatus } from "@prisma/client";
 import { PublicTopBar } from "@/components/public-top-bar";
-import { getSessionUser, requireUser } from "@/lib/auth/session";
+import { getSessionUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { canReviewSubmissions } from "@/lib/permissions";
 import { InteriorContainer, InteriorPage } from "@/components/interior-shell";
+import { loginRequiredUrl, safeReturnPath } from "@/lib/return-path";
 
-export default async function MePage() {
-  const sessionUser = await getSessionUser();
-  const user = sessionUser ?? (await requireUser());
+export default async function MePage({
+  searchParams
+}: {
+  searchParams: Promise<{ from?: string }>;
+}) {
+  const [sessionUser, sp] = await Promise.all([getSessionUser(), searchParams]);
+  const returnHref = safeReturnPath(sp.from);
+  if (!sessionUser) redirect(loginRequiredUrl(returnHref || "/me"));
+  const user = sessionUser;
 
   const canReview = canReviewSubmissions(user);
   const canUseRepository = canReview;
@@ -128,7 +136,7 @@ export default async function MePage() {
     <InteriorPage className="mn-profile-page">
       <PublicTopBar
         user={user}
-        breadcrumbs={[{ label: "首页", href: "/" }, { label: "我的" }]}
+        breadcrumbs={[{ label: returnHref ? "返回上级" : "首页", href: returnHref || "/" }, { label: "我的" }]}
         themeVariant="segmented"
       />
 

@@ -1,27 +1,35 @@
 import Link from "next/link";
+import { headers } from "next/headers";
+import { ArrowLeft } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { loginAction, logoutAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
 import { InteriorPage } from "@/components/interior-shell";
+import { authUrlWithNext, pathFromReferer, safeInternalPath } from "@/lib/return-path";
 
 export default async function LoginPage({
   searchParams
 }: {
   searchParams: Promise<{ error?: string; next?: string }>;
 }) {
-  const [user, sp] = await Promise.all([getSessionUser(), searchParams]);
-  const next = safeNextPath(sp.next);
+  const [user, sp, headerStore] = await Promise.all([getSessionUser(), searchParams, headers()]);
+  const requestedNext = safeNextPath(sp.next);
+  const refererPath = pathFromReferer(headerStore.get("referer"), headerStore.get("host"));
+  const next = requestedNext || refererPath || "/me";
+  const returnHref = requestedNext || refererPath || "/";
+  const returnLabel = returnHref === "/" ? "首页" : "返回上级";
   const errorMessage = loginErrorMessage(sp.error);
 
   return (
     <InteriorPage>
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-5 sm:px-8">
-        <Link href="/" className="text-xs font-bold text-[var(--mn-muted)] transition hover:text-[var(--mn-ink)]">
-          首页
+        <Link href={returnHref} className="inline-flex items-center gap-2 text-xs font-bold text-[var(--mn-muted)] transition hover:text-[var(--mn-ink)]">
+          {returnHref === "/" ? null : <ArrowLeft className="h-3.5 w-3.5" aria-hidden />}
+          {returnLabel}
         </Link>
         <div className="flex items-center gap-2">
           <ThemeToggle />
-          <Link href="/register" className="rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--mn-ink)]">
+          <Link href={authUrlWithNext("/register", next)} className="rounded-md border border-[var(--mn-line)] bg-[var(--mn-panel)] px-3 py-2 text-sm font-semibold transition hover:border-[var(--mn-ink)]">
             注册
           </Link>
         </div>
@@ -80,7 +88,7 @@ export default async function LoginPage({
 }
 
 function safeNextPath(value: string | undefined) {
-  return value?.startsWith("/") && !value.startsWith("//") ? value : "/me";
+  return safeInternalPath(value);
 }
 
 function loginErrorMessage(error: string | undefined) {

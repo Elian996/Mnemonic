@@ -5,8 +5,16 @@ import { MnemonicSourceType, MnemonicStatus, Prisma, UserRole, type LevelTag } f
 import { prisma } from "@/lib/db";
 import { requireRole } from "@/lib/auth/session";
 import { hasRole } from "@/lib/permissions";
-import { getAiExtensionReviewCount, getAiExtensionReviewItems } from "@/lib/ai-extension-route-fill";
-import { getAiGeneratedWordCardCount, getAiGeneratedWordCardItems } from "@/lib/ai-generated-word-cards";
+import {
+  getAiExtensionReviewCount,
+  getAiExtensionReviewItems,
+  getLatestUndoableAiExtensionDraftApproval
+} from "@/lib/ai-extension-route-fill";
+import {
+  getAiGeneratedWordCardCount,
+  getAiGeneratedWordCardItems,
+  getLatestUndoableAiGeneratedWordCardApproval
+} from "@/lib/ai-generated-word-cards";
 import {
   glareLikeLogicReviewWords,
   isRepositoryWordPackScope,
@@ -162,6 +170,8 @@ export default async function RepositoryPage({
   const aiGeneratedWordCardItems = canUseAiGeneratedWordCards
     ? await getAiGeneratedWordCardItems(aiGeneratedWordCardPageSize, isAiGeneratedWordCardsScope ? (currentPage - 1) * aiGeneratedWordCardPageSize : 0)
     : [];
+  const latestUndoableAiExtensionApproval = isAiExtensionReviewScope ? await getLatestUndoableAiExtensionDraftApproval() : null;
+  const latestUndoableAiGeneratedWordCardApproval = isAiGeneratedWordCardsScope ? await getLatestUndoableAiGeneratedWordCardApproval() : null;
   const isRemovableWordPackScope = isRepositoryWordPackScope(scope);
   const words = isSpecialDraftScope
     ? []
@@ -343,6 +353,7 @@ export default async function RepositoryPage({
         {scope === "aiExtensionReview" && canUseAiExtensionReview ? (
           <AiExtensionReviewPanel
             items={aiExtensionReviewItems}
+            latestUndoableApproval={latestUndoableAiExtensionApproval}
             totalCount={aiExtensionReviewCount}
             currentPage={currentPage}
             totalPages={totalPages}
@@ -355,6 +366,7 @@ export default async function RepositoryPage({
         {scope === "aiGeneratedWordCards" && canUseAiGeneratedWordCards ? (
           <AiGeneratedWordCardPanel
             items={aiGeneratedWordCardItems}
+            latestUndoableApproval={latestUndoableAiGeneratedWordCardApproval}
             totalCount={aiGeneratedWordCardCount}
             currentPage={currentPage}
             totalPages={totalPages}
@@ -539,6 +551,7 @@ export default async function RepositoryPage({
 
 function AiExtensionReviewPanel({
   items,
+  latestUndoableApproval,
   totalCount,
   currentPage,
   totalPages,
@@ -547,6 +560,7 @@ function AiExtensionReviewPanel({
   canExportMemoryCardImages
 }: {
   items: Awaited<ReturnType<typeof getAiExtensionReviewItems>>;
+  latestUndoableApproval: Awaited<ReturnType<typeof getLatestUndoableAiExtensionDraftApproval>>;
   totalCount: number;
   currentPage: number;
   totalPages: number;
@@ -554,6 +568,49 @@ function AiExtensionReviewPanel({
   canEditOfficialCards: boolean;
   canExportMemoryCardImages: boolean;
 }) {
+  const gridItems = items.map((item) => ({
+    id: item.id,
+    word: item.word,
+    slug: item.slug,
+    phonetic: item.phonetic,
+    partOfSpeech: item.partOfSpeech,
+    meaning: item.meaning,
+    fullMeaning: item.fullMeaning,
+    splitText: item.splitText,
+    contentMarkdown: item.contentMarkdown,
+    contentHtml: item.contentHtml,
+    targetHasActiveCard: item.targetHasActiveCard,
+    payload: {
+      baseWord: item.payload.baseWord,
+      targetWord: item.payload.targetWord,
+      ruleLabel: item.payload.ruleLabel,
+      confidence: item.payload.confidence,
+      explanation: item.payload.explanation
+    }
+  }));
+  const latestUndoableGridItem = latestUndoableApproval
+    ? {
+        id: latestUndoableApproval.id,
+        word: latestUndoableApproval.word,
+        slug: latestUndoableApproval.slug,
+        phonetic: latestUndoableApproval.phonetic,
+        partOfSpeech: latestUndoableApproval.partOfSpeech,
+        meaning: latestUndoableApproval.meaning,
+        fullMeaning: latestUndoableApproval.fullMeaning,
+        splitText: latestUndoableApproval.splitText,
+        contentMarkdown: latestUndoableApproval.contentMarkdown,
+        contentHtml: latestUndoableApproval.contentHtml,
+        targetHasActiveCard: latestUndoableApproval.targetHasActiveCard,
+        payload: {
+          baseWord: latestUndoableApproval.payload.baseWord,
+          targetWord: latestUndoableApproval.payload.targetWord,
+          ruleLabel: latestUndoableApproval.payload.ruleLabel,
+          confidence: latestUndoableApproval.payload.confidence,
+          explanation: latestUndoableApproval.payload.explanation
+        }
+      }
+    : null;
+
   return (
     <section id="ai-extension-review" className="mt-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -565,31 +622,13 @@ function AiExtensionReviewPanel({
           {totalCount.toLocaleString("zh-CN")} 个待审
         </Badge>
       </div>
-      {items.length ? (
+      {gridItems.length || latestUndoableGridItem ? (
         <>
           <AiExtensionReviewGrid
             canEditOfficialCards={canEditOfficialCards}
             canExportMemoryCardImages={canExportMemoryCardImages}
-            items={items.map((item) => ({
-              id: item.id,
-              word: item.word,
-              slug: item.slug,
-              phonetic: item.phonetic,
-              partOfSpeech: item.partOfSpeech,
-              meaning: item.meaning,
-              fullMeaning: item.fullMeaning,
-              splitText: item.splitText,
-              contentMarkdown: item.contentMarkdown,
-              contentHtml: item.contentHtml,
-              targetHasActiveCard: item.targetHasActiveCard,
-              payload: {
-                baseWord: item.payload.baseWord,
-                targetWord: item.payload.targetWord,
-                ruleLabel: item.payload.ruleLabel,
-                confidence: item.payload.confidence,
-                explanation: item.payload.explanation
-              }
-            }))}
+            items={gridItems}
+            latestUndoableApproval={latestUndoableGridItem}
           />
           {totalPages > 1 ? (
             <div className="mn-repository-pagination">
@@ -616,17 +655,60 @@ function AiExtensionReviewPanel({
 
 function AiGeneratedWordCardPanel({
   items,
+  latestUndoableApproval,
   totalCount,
   currentPage,
   totalPages,
   hrefForPage
 }: {
   items: Awaited<ReturnType<typeof getAiGeneratedWordCardItems>>;
+  latestUndoableApproval: Awaited<ReturnType<typeof getLatestUndoableAiGeneratedWordCardApproval>>;
   totalCount: number;
   currentPage: number;
   totalPages: number;
   hrefForPage: (pageNumber: number) => string;
 }) {
+  const gridItems = items.map((item) => ({
+    id: item.id,
+    word: item.word,
+    slug: item.slug,
+    phonetic: item.phonetic,
+    partOfSpeech: item.partOfSpeech,
+    meaning: item.meaning,
+    fullMeaning: item.fullMeaning,
+    splitText: item.splitText,
+    contentMarkdown: item.contentMarkdown,
+    contentHtml: item.contentHtml,
+    imageUrl: item.imageUrl,
+    targetHasActiveCard: item.targetHasActiveCard,
+    payload: {
+      methodLabel: item.payload.methodLabel,
+      routeSummary: item.payload.routeSummary,
+      confidence: item.payload.confidence
+    }
+  }));
+  const latestUndoableGridItem = latestUndoableApproval
+    ? {
+        id: latestUndoableApproval.id,
+        word: latestUndoableApproval.word,
+        slug: latestUndoableApproval.slug,
+        phonetic: latestUndoableApproval.phonetic,
+        partOfSpeech: latestUndoableApproval.partOfSpeech,
+        meaning: latestUndoableApproval.meaning,
+        fullMeaning: latestUndoableApproval.fullMeaning,
+        splitText: latestUndoableApproval.splitText,
+        contentMarkdown: latestUndoableApproval.contentMarkdown,
+        contentHtml: latestUndoableApproval.contentHtml,
+        imageUrl: latestUndoableApproval.imageUrl,
+        targetHasActiveCard: latestUndoableApproval.targetHasActiveCard,
+        payload: {
+          methodLabel: latestUndoableApproval.payload.methodLabel,
+          routeSummary: latestUndoableApproval.payload.routeSummary,
+          confidence: latestUndoableApproval.payload.confidence
+        }
+      }
+    : null;
+
   return (
     <section id="ai-generated-word-cards" className="mt-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -638,28 +720,11 @@ function AiGeneratedWordCardPanel({
           {totalCount.toLocaleString("zh-CN")} 张待审核发布
         </Badge>
       </div>
-      {items.length ? (
+      {gridItems.length || latestUndoableGridItem ? (
         <>
           <AiGeneratedWordCardGrid
-            items={items.map((item) => ({
-              id: item.id,
-              word: item.word,
-              slug: item.slug,
-              phonetic: item.phonetic,
-              partOfSpeech: item.partOfSpeech,
-              meaning: item.meaning,
-              fullMeaning: item.fullMeaning,
-              splitText: item.splitText,
-              contentMarkdown: item.contentMarkdown,
-              contentHtml: item.contentHtml,
-              imageUrl: item.imageUrl,
-              targetHasActiveCard: item.targetHasActiveCard,
-              payload: {
-                methodLabel: item.payload.methodLabel,
-                routeSummary: item.payload.routeSummary,
-                confidence: item.payload.confidence
-              }
-            }))}
+            items={gridItems}
+            latestUndoableApproval={latestUndoableGridItem}
           />
           {totalPages > 1 ? (
             <div className="mn-repository-pagination">

@@ -43,13 +43,27 @@ export type AiGeneratedWordCardGridItem = {
   };
 };
 
-export function AiGeneratedWordCardGrid({ items }: { items: AiGeneratedWordCardGridItem[] }) {
+type ApprovalHistoryItem = {
+  item: AiGeneratedWordCardGridItem;
+  index: number;
+};
+
+export function AiGeneratedWordCardGrid({
+  items,
+  latestUndoableApproval = null
+}: {
+  items: AiGeneratedWordCardGridItem[];
+  latestUndoableApproval?: AiGeneratedWordCardGridItem | null;
+}) {
   const router = useRouter();
   const [visibleItems, setVisibleItems] = useState(items);
   const [selectedId, setSelectedId] = useState<string | null>(items[0]?.id ?? null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
-  const [approvedHistory, setApprovedHistory] = useState<Array<{ item: AiGeneratedWordCardGridItem; index: number }>>([]);
+  const [approvedHistory, setApprovedHistory] = useState<ApprovalHistoryItem[]>([]);
+  const [serverUndoItem, setServerUndoItem] = useState<ApprovalHistoryItem | null>(
+    latestUndoableApproval ? { item: latestUndoableApproval, index: 0 } : null
+  );
   const [linkedOpenCards, setLinkedOpenCards] = useState<LevelWordItem[]>([]);
   const [activeLinkedCardId, setActiveLinkedCardId] = useState<string | null>(null);
   const [isApproving, setIsApproving] = useState(false);
@@ -60,6 +74,11 @@ export function AiGeneratedWordCardGrid({ items }: { items: AiGeneratedWordCardG
   const linkedWordCache = useRef(new Map<string, LevelWordItem>());
   const activeItem = useMemo(() => visibleItems.find((item) => item.id === activeId) ?? null, [activeId, visibleItems]);
   const selectedItem = useMemo(() => visibleItems.find((item) => item.id === selectedId) ?? visibleItems[0] ?? null, [selectedId, visibleItems]);
+  const undoTarget = useMemo(() => {
+    if (approvedHistory[0]) return approvedHistory[0];
+    if (!serverUndoItem) return null;
+    return visibleItems.some((item) => item.id === serverUndoItem.item.id) ? null : serverUndoItem;
+  }, [approvedHistory, serverUndoItem, visibleItems]);
 
   useEffect(() => {
     setPortalRoot(document.body);
@@ -70,6 +89,10 @@ export function AiGeneratedWordCardGrid({ items }: { items: AiGeneratedWordCardG
     setSelectedId((current) => (current && items.some((item) => item.id === current) ? current : (items[0]?.id ?? null)));
     setActiveId((current) => (current && items.some((item) => item.id === current) ? current : null));
   }, [items]);
+
+  useEffect(() => {
+    setServerUndoItem(latestUndoableApproval ? { item: latestUndoableApproval, index: 0 } : null);
+  }, [latestUndoableApproval]);
 
   useEffect(() => {
     const html = document.documentElement;
@@ -193,7 +216,7 @@ export function AiGeneratedWordCardGrid({ items }: { items: AiGeneratedWordCardG
   }, [activeItem, isApproving, isRejecting, router, visibleItems]);
 
   const undoLastApproval = useCallback(async () => {
-    const last = approvedHistory[0];
+    const last = undoTarget;
     if (!last || isUndoing || isApproving || isRejecting) return;
     setIsUndoing(true);
     setMessage("");
@@ -205,7 +228,8 @@ export function AiGeneratedWordCardGrid({ items }: { items: AiGeneratedWordCardG
         next.splice(Math.min(last.index, next.length), 0, last.item);
         return next;
       });
-      setApprovedHistory((current) => current.slice(1));
+      setApprovedHistory((current) => current.filter((historyItem) => historyItem.item.id !== last.item.id));
+      setServerUndoItem((current) => (current?.item.id === last.item.id ? null : current));
       setSelectedId(last.item.id);
       setActiveId(last.item.id);
       setMessage(`已撤回 ${last.item.word}，草稿回到待审。`);
@@ -215,7 +239,7 @@ export function AiGeneratedWordCardGrid({ items }: { items: AiGeneratedWordCardG
     } finally {
       setIsUndoing(false);
     }
-  }, [approvedHistory, isApproving, isRejecting, isUndoing, router]);
+  }, [isApproving, isRejecting, isUndoing, router, undoTarget]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -224,7 +248,7 @@ export function AiGeneratedWordCardGrid({ items }: { items: AiGeneratedWordCardG
       if (linkedOpenCards.length) return;
 
       if (isAiGeneratedUndoShortcut(event)) {
-        if (!approvedHistory.length || isApproving || isRejecting || isUndoing) return;
+        if (!undoTarget || isApproving || isRejecting || isUndoing) return;
         event.preventDefault();
         void undoLastApproval();
         return;
@@ -265,60 +289,85 @@ export function AiGeneratedWordCardGrid({ items }: { items: AiGeneratedWordCardG
   }, [
     activeItem,
     approveActive,
-    approvedHistory.length,
     isApproving,
     isRejecting,
     isUndoing,
     linkedOpenCards.length,
     moveSelection,
     selectedItem,
+    undoTarget,
     undoLastApproval,
     visibleItems.length
   ]);
 
   return (
     <>
-      <div className="mn-level-word-grid mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {visibleItems.map((item) => {
-          const selected = selectedItem?.id === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              ref={(node) => {
-                if (node) itemButtonRefs.current.set(item.id, node);
-                else itemButtonRefs.current.delete(item.id);
-              }}
-              data-level-word-id={draftWordId(item.id)}
-              onClick={() => {
-                setSelectedId(item.id);
-                setActiveId(item.id);
-              }}
-              className={cn(
-                "mn-level-word-card group flex min-h-44 appearance-none flex-col justify-between rounded-lg border border-[#d8dde6] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#171a1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:border-border dark:bg-card dark:hover:border-foreground",
-                selected &&
-                  "border-[#1a73e8] ring-2 ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
-              )}
-              aria-label={`审核 ${item.word} AI生成单词卡`}
-              aria-current={selected ? "true" : undefined}
-            >
-              <span>
-                <span className="word-card-title block truncate font-semibold tracking-normal text-[#171a1f] dark:text-foreground">
-                  {item.word}
+      {undoTarget ? (
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#d7dde8] bg-white px-4 py-3 text-sm shadow-sm dark:border-border dark:bg-card">
+          <div className="min-w-0">
+            <div className="font-semibold text-[#171a1f] dark:text-foreground">最近通过：{undoTarget.item.word}</div>
+            <div className="mt-0.5 text-xs font-medium text-[#69717f] dark:text-muted-foreground">可撤回为待审核草稿。</div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={isUndoing || isApproving || isRejecting}
+            onClick={undoLastApproval}
+            className="h-9 rounded-full border-[#d7dde8]"
+          >
+            {isUndoing ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1.5 h-4 w-4" />}
+            撤回 {undoTarget.item.word}
+          </Button>
+        </div>
+      ) : null}
+      {visibleItems.length ? (
+        <div className="mn-level-word-grid mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {visibleItems.map((item) => {
+            const selected = selectedItem?.id === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                ref={(node) => {
+                  if (node) itemButtonRefs.current.set(item.id, node);
+                  else itemButtonRefs.current.delete(item.id);
+                }}
+                data-level-word-id={draftWordId(item.id)}
+                onClick={() => {
+                  setSelectedId(item.id);
+                  setActiveId(item.id);
+                }}
+                className={cn(
+                  "mn-level-word-card group flex min-h-44 appearance-none flex-col justify-between rounded-lg border border-[#d8dde6] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#171a1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:border-border dark:bg-card dark:hover:border-foreground",
+                  selected &&
+                    "border-[#1a73e8] ring-2 ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
+                )}
+                aria-label={`审核 ${item.word} AI生成单词卡`}
+                aria-current={selected ? "true" : undefined}
+              >
+                <span>
+                  <span className="word-card-title block truncate font-semibold tracking-normal text-[#171a1f] dark:text-foreground">
+                    {item.word}
+                  </span>
+                  <span className="word-card-meaning mt-6 block min-h-12 text-[#323741] dark:text-foreground/80">
+                    {item.meaning || item.fullMeaning || "释义待补"}
+                  </span>
                 </span>
-                <span className="word-card-meaning mt-6 block min-h-12 text-[#323741] dark:text-foreground/80">
-                  {item.meaning || item.fullMeaning || "释义待补"}
+                <span className="mt-4 block border-t border-[#eef2f6] pt-3 text-xs font-semibold leading-5 text-[#69717f] dark:border-border dark:text-muted-foreground">
+                  <span className="block truncate">
+                    {item.targetHasActiveCard ? "目标已有卡" : item.splitText || item.payload.methodLabel || "AI生成单词卡"}
+                  </span>
                 </span>
-              </span>
-              <span className="mt-4 block border-t border-[#eef2f6] pt-3 text-xs font-semibold leading-5 text-[#69717f] dark:border-border dark:text-muted-foreground">
-                <span className="block truncate">
-                  {item.targetHasActiveCard ? "目标已有卡" : item.splitText || item.payload.methodLabel || "AI生成单词卡"}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-5 rounded-lg border border-dashed border-[#cbd5e1] bg-[#f8fafc] px-4 py-5 text-sm font-medium text-[#64748b] dark:border-border dark:bg-muted/30 dark:text-muted-foreground">
+          当前没有待审核草稿。
+        </div>
+      )}
       {message ? <p className="mt-3 text-sm font-medium text-[#64748b] dark:text-muted-foreground">{message}</p> : null}
 
       {portalRoot && activeItem
@@ -330,13 +379,13 @@ export function AiGeneratedWordCardGrid({ items }: { items: AiGeneratedWordCardG
               onNext={() => moveSelection(1, true)}
               onApprove={approveActive}
               onReject={rejectActive}
-              onUndo={approvedHistory.length ? undoLastApproval : undefined}
+              onUndo={undoTarget ? undoLastApproval : undefined}
               onItemUpdate={updateVisibleItem}
               onOpenLinkedWord={openLinkedWordBySlug}
               isApproving={isApproving}
               isRejecting={isRejecting}
               isUndoing={isUndoing}
-              lastApprovedWord={approvedHistory[0]?.item.word ?? ""}
+              lastApprovedWord={undoTarget?.item.word ?? ""}
             />,
             portalRoot
           )

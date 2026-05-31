@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowRight, Check, Loader2, Pencil, X } from "lucide-react";
+import { ArrowRight, Check, Loader2, Pencil, RotateCcw, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -42,20 +43,31 @@ export type AiExtensionReviewGridItem = {
   };
 };
 
+type ApprovalHistoryItem = {
+  item: AiExtensionReviewGridItem;
+  index: number;
+};
+
 export function AiExtensionReviewGrid({
   items,
+  latestUndoableApproval = null,
   canEditOfficialCards = false,
   canExportMemoryCardImages = false
 }: {
   items: AiExtensionReviewGridItem[];
+  latestUndoableApproval?: AiExtensionReviewGridItem | null;
   canEditOfficialCards?: boolean;
   canExportMemoryCardImages?: boolean;
 }) {
+  const router = useRouter();
   const [visibleItems, setVisibleItems] = useState(items);
   const [selectedId, setSelectedId] = useState<string | null>(items[0]?.id ?? null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
-  const [approvedHistory, setApprovedHistory] = useState<Array<{ item: AiExtensionReviewGridItem; index: number }>>([]);
+  const [approvedHistory, setApprovedHistory] = useState<ApprovalHistoryItem[]>([]);
+  const [serverUndoItem, setServerUndoItem] = useState<ApprovalHistoryItem | null>(
+    latestUndoableApproval ? { item: latestUndoableApproval, index: 0 } : null
+  );
   const [linkedOpenCards, setLinkedOpenCards] = useState<LevelWordItem[]>([]);
   const [activeLinkedCardId, setActiveLinkedCardId] = useState<string | null>(null);
   const [isApproving, setIsApproving] = useState(false);
@@ -65,6 +77,11 @@ export function AiExtensionReviewGrid({
   const linkedWordCache = useRef(new Map<string, LevelWordItem>());
   const activeItem = useMemo(() => visibleItems.find((item) => item.id === activeId) ?? null, [activeId, visibleItems]);
   const selectedItem = useMemo(() => visibleItems.find((item) => item.id === selectedId) ?? visibleItems[0] ?? null, [selectedId, visibleItems]);
+  const undoTarget = useMemo(() => {
+    if (approvedHistory[0]) return approvedHistory[0];
+    if (!serverUndoItem) return null;
+    return visibleItems.some((item) => item.id === serverUndoItem.item.id) ? null : serverUndoItem;
+  }, [approvedHistory, serverUndoItem, visibleItems]);
   const updateVisibleItem = useCallback((updatedItem: AiExtensionReviewGridItem) => {
     setVisibleItems((current) => current.map((item) => (item.id === updatedItem.id ? updatedItem : item)));
   }, []);
@@ -118,6 +135,10 @@ export function AiExtensionReviewGrid({
   }, [items]);
 
   useEffect(() => {
+    setServerUndoItem(latestUndoableApproval ? { item: latestUndoableApproval, index: 0 } : null);
+  }, [latestUndoableApproval]);
+
+  useEffect(() => {
     const html = document.documentElement;
     if (activeItem) html.classList.add("mn-memory-card-open");
     else html.classList.remove("mn-memory-card-open");
@@ -163,15 +184,16 @@ export function AiExtensionReviewGrid({
       setSelectedId(nextItem?.id ?? null);
       setActiveId(nextItem?.id ?? null);
       setMessage(`已批准 ${activeItem.word}，已跳到下一张。`);
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "批准失败。");
     } finally {
       setIsApproving(false);
     }
-  }, [activeItem, isApproving, visibleItems]);
+  }, [activeItem, isApproving, router, visibleItems]);
 
   const undoLastApproval = useCallback(async () => {
-    const last = approvedHistory[0];
+    const last = undoTarget;
     if (!last || isUndoing || isApproving) return;
     setIsUndoing(true);
     setMessage("");
@@ -183,16 +205,18 @@ export function AiExtensionReviewGrid({
         next.splice(Math.min(last.index, next.length), 0, last.item);
         return next;
       });
-      setApprovedHistory((current) => current.slice(1));
+      setApprovedHistory((current) => current.filter((historyItem) => historyItem.item.id !== last.item.id));
+      setServerUndoItem((current) => (current?.item.id === last.item.id ? null : current));
       setSelectedId(last.item.id);
       setActiveId(last.item.id);
       setMessage(`已撤回 ${last.item.word}，草稿回到待审。`);
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "撤回失败。");
     } finally {
       setIsUndoing(false);
     }
-  }, [approvedHistory, isApproving, isUndoing]);
+  }, [isApproving, isUndoing, router, undoTarget]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -201,7 +225,7 @@ export function AiExtensionReviewGrid({
       if (linkedOpenCards.length) return;
 
       if (isAiExtensionUndoShortcut(event)) {
-        if (!approvedHistory.length || isApproving || isUndoing) return;
+        if (!undoTarget || isApproving || isUndoing) return;
         event.preventDefault();
         void undoLastApproval();
         return;
@@ -245,58 +269,83 @@ export function AiExtensionReviewGrid({
   }, [
     activeItem,
     approveActive,
-    approvedHistory.length,
     isApproving,
     isUndoing,
     linkedOpenCards.length,
     moveSelection,
     selectedItem,
+    undoTarget,
     undoLastApproval,
     visibleItems.length
   ]);
 
   return (
     <>
-      <div className="mn-level-word-grid mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {visibleItems.map((item) => {
-          const selected = selectedItem?.id === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              ref={(node) => {
-                if (node) itemButtonRefs.current.set(item.id, node);
-                else itemButtonRefs.current.delete(item.id);
-              }}
-              onClick={() => {
-                setSelectedId(item.id);
-                setActiveId(item.id);
-              }}
-              className={cn(
-                "mn-level-word-card group flex min-h-44 appearance-none flex-col justify-between rounded-lg border border-[#d8dde6] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#171a1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:border-border dark:bg-card dark:hover:border-foreground",
-                selected &&
-                  "border-[#1a73e8] ring-2 ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
-              )}
-              aria-label={`打开 ${item.word} AI 延伸单词卡`}
-              aria-current={selected ? "true" : undefined}
-            >
-              <span>
-                <span className="word-card-title block truncate font-semibold tracking-normal text-[#171a1f] dark:text-foreground">
-                  {item.word}
+      {undoTarget ? (
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#d7dde8] bg-white px-4 py-3 text-sm shadow-sm dark:border-border dark:bg-card">
+          <div className="min-w-0">
+            <div className="font-semibold text-[#171a1f] dark:text-foreground">最近批准：{undoTarget.item.word}</div>
+            <div className="mt-0.5 text-xs font-medium text-[#69717f] dark:text-muted-foreground">可撤回为待审核草稿。</div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={isUndoing || isApproving}
+            onClick={undoLastApproval}
+            className="h-9 rounded-full border-[#d7dde8]"
+          >
+            {isUndoing ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1.5 h-4 w-4" />}
+            撤回 {undoTarget.item.word}
+          </Button>
+        </div>
+      ) : null}
+      {visibleItems.length ? (
+        <div className="mn-level-word-grid mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {visibleItems.map((item) => {
+            const selected = selectedItem?.id === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                ref={(node) => {
+                  if (node) itemButtonRefs.current.set(item.id, node);
+                  else itemButtonRefs.current.delete(item.id);
+                }}
+                onClick={() => {
+                  setSelectedId(item.id);
+                  setActiveId(item.id);
+                }}
+                className={cn(
+                  "mn-level-word-card group flex min-h-44 appearance-none flex-col justify-between rounded-lg border border-[#d8dde6] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#171a1f] hover:shadow-sm focus:outline-none focus-visible:border-[#1a73e8] focus-visible:ring-2 focus-visible:ring-[#1a73e8] dark:border-border dark:bg-card dark:hover:border-foreground",
+                  selected &&
+                    "border-[#1a73e8] ring-2 ring-[#1a73e8] dark:border-[#7ab7ff] dark:ring-[#7ab7ff]"
+                )}
+                aria-label={`打开 ${item.word} AI 延伸单词卡`}
+                aria-current={selected ? "true" : undefined}
+              >
+                <span>
+                  <span className="word-card-title block truncate font-semibold tracking-normal text-[#171a1f] dark:text-foreground">
+                    {item.word}
+                  </span>
+                  <span className="word-card-meaning mt-6 block min-h-12 text-[#323741] dark:text-foreground/80">
+                    {item.meaning || "释义待补"}
+                  </span>
                 </span>
-                <span className="word-card-meaning mt-6 block min-h-12 text-[#323741] dark:text-foreground/80">
-                  {item.meaning || "释义待补"}
+                <span className="mt-4 block border-t border-[#eef2f6] pt-3 text-xs font-semibold leading-5 text-[#69717f] dark:border-border dark:text-muted-foreground">
+                  <span className="block truncate">
+                    {item.payload.baseWord} <span aria-hidden="true">→</span> {item.payload.targetWord}
+                  </span>
                 </span>
-              </span>
-              <span className="mt-4 block border-t border-[#eef2f6] pt-3 text-xs font-semibold leading-5 text-[#69717f] dark:border-border dark:text-muted-foreground">
-                <span className="block truncate">
-                  {item.payload.baseWord} <span aria-hidden="true">→</span> {item.payload.targetWord}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-5 rounded-lg border border-dashed border-[#cbd5e1] bg-[#f8fafc] px-4 py-5 text-sm font-medium text-[#64748b] dark:border-border dark:bg-muted/30 dark:text-muted-foreground">
+          当前没有待审核草稿。
+        </div>
+      )}
       {message ? <p className="mt-3 text-sm font-medium text-[#64748b] dark:text-muted-foreground">{message}</p> : null}
 
       {portalRoot && activeItem
@@ -307,12 +356,12 @@ export function AiExtensionReviewGrid({
               onPrevious={() => moveSelection(-1, true)}
               onNext={() => moveSelection(1, true)}
               onApprove={approveActive}
-              onUndo={approvedHistory.length ? undoLastApproval : undefined}
+              onUndo={undoTarget ? undoLastApproval : undefined}
               onItemUpdate={updateVisibleItem}
               onOpenLinkedWord={openLinkedWordBySlug}
               isApproving={isApproving}
               isUndoing={isUndoing}
-              lastApprovedWord={approvedHistory[0]?.item.word ?? ""}
+              lastApprovedWord={undoTarget?.item.word ?? ""}
             />,
             portalRoot
           )

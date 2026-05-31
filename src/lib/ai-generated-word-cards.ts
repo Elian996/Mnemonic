@@ -1,9 +1,13 @@
-import { ImportDraftStatus, MnemonicStatus, Prisma } from "@prisma/client";
+import { ImportDraftStatus, MnemonicStatus, Prisma, type ImportDraft } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { renderMnemonicMarkdown } from "@/lib/wiki-links/renderer";
 import { normalizeSplitTextForWord } from "@/lib/ai-extension-route-fill";
 
 export const aiGeneratedWordCardSource = "ai-generated-word-card";
+const aiGeneratedWordCardReviewMarker = "ai-generated-word-card-review";
+const latestUndoableApprovalTake = 50;
+
+type AiGeneratedWordCardDraftRecord = ImportDraft;
 
 export type AiGeneratedWordCardPayload = {
   type: typeof aiGeneratedWordCardSource;
@@ -36,22 +40,73 @@ export async function getAiGeneratedWordCardItems(limit = 80, offset = 0) {
     skip: offset,
     take: limit
   });
+  return buildAiGeneratedWordCardItems(drafts);
+}
+
+export async function getLatestUndoableAiGeneratedWordCardApproval() {
+  const drafts = await prisma.importDraft.findMany({
+    where: {
+      source: aiGeneratedWordCardSource,
+      status: ImportDraftStatus.SAVED,
+      savedEntryId: { not: null }
+    },
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    take: latestUndoableApprovalTake
+  });
+
+  const savedEntryIds = drafts.flatMap((draft) => (draft.savedEntryId ? [draft.savedEntryId] : []));
+  if (!savedEntryIds.length) return null;
+
+  const entries = await prisma.mnemonicEntry.findMany({
+    where: {
+      id: { in: savedEntryIds },
+      status: { not: MnemonicStatus.ARCHIVED },
+      editorNote: { contains: aiGeneratedWordCardReviewMarker }
+    },
+    select: { id: true, targetWordId: true }
+  });
+  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
+
+  for (const draft of drafts) {
+    if (!draft.savedEntryId) continue;
+    const entry = entryById.get(draft.savedEntryId);
+    if (!entry) continue;
+    const payload = readAiGeneratedWordCardPayload(draft.agentPayload);
+    if (!payload) continue;
+
+    const items = await buildAiGeneratedWordCardItems(
+      [draft],
+      new Map([[entry.targetWordId, new Set([draft.savedEntryId])]])
+    );
+    if (items[0]) return items[0];
+  }
+
+  return null;
+}
+
+async function buildAiGeneratedWordCardItems(
+  drafts: AiGeneratedWordCardDraftRecord[],
+  activeEntryIdsToIgnoreByTargetWordId = new Map<string, Set<string>>()
+) {
   const payloads = drafts
     .map((draft) => ({ draft, payload: readAiGeneratedWordCardPayload(draft.agentPayload) }))
     .filter((item): item is { draft: typeof item.draft; payload: AiGeneratedWordCardPayload } => Boolean(item.payload));
 
   const targetWordIds = Array.from(new Set(payloads.map((item) => item.payload.targetWordId)));
-  const activeCounts = targetWordIds.length
-    ? await prisma.mnemonicEntry.groupBy({
-        by: ["targetWordId"],
+  const activeEntries = targetWordIds.length
+    ? await prisma.mnemonicEntry.findMany({
         where: {
           targetWordId: { in: targetWordIds },
           status: { not: MnemonicStatus.ARCHIVED }
         },
-        _count: { _all: true }
+        select: { id: true, targetWordId: true }
       })
     : [];
-  const activeCountByWordId = new Map(activeCounts.map((count) => [count.targetWordId, count._count._all]));
+  const activeCountByWordId = new Map<string, number>();
+  for (const entry of activeEntries) {
+    if (activeEntryIdsToIgnoreByTargetWordId.get(entry.targetWordId)?.has(entry.id)) continue;
+    activeCountByWordId.set(entry.targetWordId, (activeCountByWordId.get(entry.targetWordId) ?? 0) + 1);
+  }
   const targetWords = targetWordIds.length
     ? await prisma.word.findMany({
         where: { id: { in: targetWordIds } },

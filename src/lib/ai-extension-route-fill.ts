@@ -1,14 +1,18 @@
-import { ImportDraftStatus, MnemonicStatus, Prisma } from "@prisma/client";
+import { ImportDraftStatus, MnemonicStatus, Prisma, type ImportDraft } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { renderMnemonicMarkdown } from "@/lib/wiki-links/renderer";
 
 export const aiExtensionDraftSource = "ai-extension-route-fill";
 export const aiExtensionRouteFillPausedReason =
   "AI 延伸生成已暂停：上一批草稿暴露出未核准中文释义和构词关系错配，必须先做人工释义核验。";
+const aiExtensionReviewMarker = "ai-extension-review";
+const latestUndoableApprovalTake = 50;
 
 const activeMnemonicEntryWhere: Prisma.MnemonicEntryWhereInput = {
   status: { not: MnemonicStatus.ARCHIVED }
 };
+
+type AiExtensionDraftRecord = ImportDraft;
 
 type WordSeed = {
   id: string;
@@ -282,21 +286,72 @@ export async function getAiExtensionReviewItems(limit = 80, offset = 0) {
     skip: offset,
     take: limit
   });
+  return buildAiExtensionReviewItems(drafts);
+}
+
+export async function getLatestUndoableAiExtensionDraftApproval() {
+  const drafts = await prisma.importDraft.findMany({
+    where: {
+      source: aiExtensionDraftSource,
+      status: ImportDraftStatus.SAVED,
+      savedEntryId: { not: null }
+    },
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    take: latestUndoableApprovalTake
+  });
+
+  const savedEntryIds = drafts.flatMap((draft) => (draft.savedEntryId ? [draft.savedEntryId] : []));
+  if (!savedEntryIds.length) return null;
+
+  const entries = await prisma.mnemonicEntry.findMany({
+    where: {
+      id: { in: savedEntryIds },
+      status: { not: MnemonicStatus.ARCHIVED },
+      editorNote: { contains: aiExtensionReviewMarker }
+    },
+    select: { id: true, targetWordId: true }
+  });
+  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
+
+  for (const draft of drafts) {
+    if (!draft.savedEntryId) continue;
+    const entry = entryById.get(draft.savedEntryId);
+    if (!entry) continue;
+    const payload = readDraftPayload(draft.agentPayload);
+    if (!payload) continue;
+
+    const items = await buildAiExtensionReviewItems(
+      [draft],
+      new Map([[entry.targetWordId, new Set([draft.savedEntryId])]])
+    );
+    if (items[0]) return items[0];
+  }
+
+  return null;
+}
+
+async function buildAiExtensionReviewItems(
+  drafts: AiExtensionDraftRecord[],
+  activeEntryIdsToIgnoreByTargetWordId = new Map<string, Set<string>>()
+) {
   const payloads = drafts
     .map((draft) => ({ draft, payload: readDraftPayload(draft.agentPayload) }))
     .filter((item): item is { draft: typeof item.draft; payload: AiExtensionDraftPayload } => Boolean(item.payload));
   const targetWordIds = Array.from(new Set(payloads.map((item) => item.payload.targetWordId)));
-  const activeCounts = targetWordIds.length
-    ? await prisma.mnemonicEntry.groupBy({
-        by: ["targetWordId"],
+  const activeEntries = targetWordIds.length
+    ? await prisma.mnemonicEntry.findMany({
         where: {
           targetWordId: { in: targetWordIds },
           status: { not: MnemonicStatus.ARCHIVED }
         },
-        _count: { _all: true }
+        select: { id: true, targetWordId: true }
       })
     : [];
-  const activeCountByWordId = new Map(activeCounts.map((count) => [count.targetWordId, count._count._all]));
+  const activeCountByWordId = new Map<string, number>();
+  for (const entry of activeEntries) {
+    if (activeEntryIdsToIgnoreByTargetWordId.get(entry.targetWordId)?.has(entry.id)) continue;
+    activeCountByWordId.set(entry.targetWordId, (activeCountByWordId.get(entry.targetWordId) ?? 0) + 1);
+  }
   const targetWords = targetWordIds.length
     ? await prisma.word.findMany({
         where: { id: { in: targetWordIds } },

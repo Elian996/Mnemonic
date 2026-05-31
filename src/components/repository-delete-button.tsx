@@ -2,9 +2,8 @@
 
 import { X } from "lucide-react";
 import { useRef, useState } from "react";
-import { LoadingBox } from "@/components/loading-line";
 import { deleteWordFromRepositoryAction, removeWordFromRepositoryPackAction } from "@/lib/services/word-service";
-import { REPOSITORY_PACK_REMOVE_EVENT } from "@/lib/repository-pack-events";
+import { dispatchRepositoryPackRemoveEvent } from "@/lib/repository-pack-events";
 import { cn } from "@/lib/utils";
 
 export function RepositoryDeleteButton({
@@ -29,11 +28,11 @@ export function RepositoryDeleteButton({
 
   const removeFromPack = async () => {
     if (!packScope || isPending) return;
+    const card = formRef.current?.closest<HTMLElement>("[data-repository-word-card='true']");
     setIsPending(true);
     setErrorMessage("");
-    formRef.current
-      ?.closest("[data-repository-word-card]")
-      ?.classList.add("mn-repository-word-card-removing");
+    card?.classList.add("mn-repository-word-card-hidden");
+    dispatchRepositoryPackRemoveEvent({ status: "pending", count: 1, packScope, word });
 
     try {
       const response = await fetch("/api/repository/word-pack-exclusions", {
@@ -47,17 +46,13 @@ export function RepositoryDeleteButton({
       };
       if (!response.ok) throw new Error(result.error || "移出词包失败。");
 
-      formRef.current?.closest("[data-repository-word-card]")?.setAttribute("hidden", "true");
-      window.dispatchEvent(
-        new CustomEvent(REPOSITORY_PACK_REMOVE_EVENT, {
-          detail: { count: result.removedCount || 1, packScope }
-        })
-      );
+      dispatchRepositoryPackRemoveEvent({ status: "done", count: result.removedCount || 1, packScope, word });
+      setIsPending(false);
     } catch (error) {
-      formRef.current
-        ?.closest("[data-repository-word-card]")
-        ?.classList.remove("mn-repository-word-card-removing");
-      setErrorMessage(error instanceof Error ? error.message : "移出词包失败。");
+      const message = error instanceof Error ? error.message : "移出词包失败。";
+      card?.classList.remove("mn-repository-word-card-hidden");
+      dispatchRepositoryPackRemoveEvent({ status: "error", count: 1, packScope, word, message: `${message} 已恢复显示。` });
+      setErrorMessage(message);
       setIsPending(false);
     }
   };
@@ -92,11 +87,6 @@ export function RepositoryDeleteButton({
       >
         <X className={variant === "chip" ? "h-3.5 w-3.5" : "h-4 w-4"} />
       </button>
-      {isPending ? (
-        <div className="mn-repository-card-loading">
-          <LoadingBox label="正在移出词包" description="单词和单词卡会保留" />
-        </div>
-      ) : null}
       {errorMessage ? <span className="sr-only">{errorMessage}</span> : null}
     </form>
   );

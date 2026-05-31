@@ -2,11 +2,10 @@
 
 import { CheckSquare, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { LoadingOverlay } from "@/components/loading-line";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WordCardPopupButton } from "@/components/word-card-popup-button";
-import { REPOSITORY_PACK_REMOVE_EVENT } from "@/lib/repository-pack-events";
+import { dispatchRepositoryPackRemoveEvent } from "@/lib/repository-pack-events";
 import { cn } from "@/lib/utils";
 
 export type RepositoryBulkDeleteWord = {
@@ -73,14 +72,26 @@ export function RepositoryBulkDeleteList({
 
   const removeSelectedFromPack = async () => {
     if (!packScope || isRemovingFromPack || !selectedWords.length) return;
+    const wordsToRemove = selectedWords;
+    const idsToRemove = new Set(wordsToRemove.map((word) => word.id));
+    const previousVisibleWords = visibleWords;
+    const previousSelectedIds = new Set(selectedIds);
+
     setIsRemovingFromPack(true);
     setErrorMessage("");
+    setVisibleWords((current) => current.filter((word) => !idsToRemove.has(word.id)));
+    setSelectedIds(new Set());
+    dispatchRepositoryPackRemoveEvent({
+      status: "pending",
+      count: wordsToRemove.length,
+      packScope
+    });
 
     try {
       const response = await fetch("/api/repository/word-pack-exclusions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ packScope, wordIds: selectedWords.map((word) => word.id) })
+        body: JSON.stringify({ packScope, wordIds: wordsToRemove.map((word) => word.id) })
       });
       const result = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -89,16 +100,22 @@ export function RepositoryBulkDeleteList({
       };
       if (!response.ok) throw new Error(result.error || "移出词包失败。");
 
-      const removedIds = new Set(result.removedWordIds?.length ? result.removedWordIds : selectedWords.map((word) => word.id));
-      setVisibleWords((current) => current.filter((word) => !removedIds.has(word.id)));
-      setSelectedIds(new Set());
-      window.dispatchEvent(
-        new CustomEvent(REPOSITORY_PACK_REMOVE_EVENT, {
-          detail: { count: result.removedCount || removedIds.size, packScope }
-        })
-      );
+      dispatchRepositoryPackRemoveEvent({
+        status: "done",
+        count: result.removedCount || wordsToRemove.length,
+        packScope
+      });
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "移出词包失败。");
+      const message = error instanceof Error ? error.message : "移出词包失败。";
+      setVisibleWords(previousVisibleWords);
+      setSelectedIds(previousSelectedIds);
+      dispatchRepositoryPackRemoveEvent({
+        status: "error",
+        count: wordsToRemove.length,
+        packScope,
+        message: `${message} 已恢复显示。`
+      });
+      setErrorMessage(message);
     } finally {
       setIsRemovingFromPack(false);
     }
@@ -131,7 +148,6 @@ export function RepositoryBulkDeleteList({
       }}
       className="mn-level-word-list mt-5 overflow-hidden rounded-lg border border-[#d8dde6] bg-white dark:border-border dark:bg-card"
     >
-      {isRemovingFromPack ? <LoadingOverlay label="正在移出词包" description="单词和单词卡会保留" /> : null}
       <input type="hidden" name="returnTo" value={returnTo} />
       {packScope ? <input type="hidden" name="packScope" value={packScope} /> : null}
       <div className="mn-repository-bulk-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-black/5 bg-white/95 px-5 py-4 sm:px-7">

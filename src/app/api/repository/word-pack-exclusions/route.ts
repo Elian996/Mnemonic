@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
 import { UserRole } from "@prisma/client";
 import { getSessionUser } from "@/lib/auth/session";
 import { hasRole } from "@/lib/permissions";
@@ -26,7 +25,6 @@ export async function POST(request: Request) {
     wordIds,
     packScope
   });
-  revalidatePath("/repository");
 
   return NextResponse.json(
     {

@@ -3,18 +3,29 @@ import { revalidatePath } from "next/cache";
 import { MnemonicSourceType, MnemonicStatus, VoteType, WordMarkState } from "@prisma/client";
 import { getSessionUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
+import { readJsonBody, RequestBodyTooLargeError } from "@/lib/security/request-body";
 
 const validMarkStates = new Set<string>(Object.values(WordMarkState));
 const validVoteTypes = new Set<string>([VoteType.LIKE, VoteType.DISLIKE]);
 const MAX_ITEMS = 5000;
 
 export async function POST(request: Request) {
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:sync-guest-progress", request.headers),
+    limit: 30,
+    windowMs: 10 * 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("同步太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => ({}))) as {
+  const bodyResult = await readSyncBody(request);
+  if (bodyResult.response) return bodyResult.response;
+  const body = bodyResult.body as {
     marks?: Record<string, unknown>;
     bookmarkedWordIds?: unknown[];
     mnemonicReactions?: Record<string, unknown>;
@@ -190,6 +201,20 @@ export async function POST(request: Request) {
     mnemonicReactionCount: validMnemonicReactions.length,
     mnemonicCardOrderCount: validMnemonicCardOrders.length
   });
+}
+
+async function readSyncBody(request: Request): Promise<
+  | { body: Record<string, unknown>; response?: never }
+  | { body?: never; response: NextResponse }
+> {
+  try {
+    return { body: await readJsonBody<Record<string, unknown>>(request, 1024 * 1024) };
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return { response: NextResponse.json({ error: "同步内容过大。" }, { status: 413 }) };
+    }
+    return { body: {} };
+  }
 }
 
 function parseMarks(value: Record<string, unknown> | undefined) {

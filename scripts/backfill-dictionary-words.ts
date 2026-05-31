@@ -3,6 +3,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { PrismaClient, WordStatus } from "@prisma/client";
 import { slugify } from "../src/lib/slug";
+import { normalizePhonetic } from "../src/lib/phonetics";
 
 const prisma = new PrismaClient();
 const dictionaryPath = path.join(process.cwd(), "data", "ecdict.full.csv");
@@ -175,18 +176,6 @@ function parseCsvLine(line: string) {
 
 function cleanText(value: string) {
   return value.replace(/\\n/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function normalizePhonetic(value: string) {
-  const text = value
-    .trim()
-    .replace(/^\/|\/$/g, "")
-    .replace(/ә/g, "ə")
-    .replace(/ɑ/g, "ɑ")
-    .replace(/:/g, "ː")
-    .replace(/'/g, "ˈ")
-    .replace(/,/g, "ˌ");
-  return text ? `/${text}/` : "";
 }
 
 function normalizePos(value: string) {

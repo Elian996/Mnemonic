@@ -4,13 +4,23 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth/session";
 import { canEditMnemonic, canViewMnemonic, hasRole } from "@/lib/permissions";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
+import { readJsonBody, RequestBodyTooLargeError } from "@/lib/security/request-body";
 import { markdownToPlainText, prepareMnemonicHtmlForDisplay, renderMnemonicMarkdown } from "@/lib/wiki-links/renderer";
 import { ensureWordNode, syncEntryWikiLinks } from "@/lib/wiki-links/resolve";
 import { vocabCategories } from "@/lib/vocab-categories";
 
 const noStoreHeaders = { "Cache-Control": "no-store, max-age=0" };
+const WORD_CARD_POST_BODY_LIMIT = 256 * 1024;
 
-export async function GET(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:word-card:get", request.headers),
+    limit: 600,
+    windowMs: 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("读取太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
   const { slug } = await params;
   const user = await getSessionUser();
   const word = await findWordCardRecord(decodeURIComponent(slug), user?.id ?? null);
@@ -23,9 +33,18 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ slug: string }> }) {
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:word-card:post", request.headers),
+    limit: 120,
+    windowMs: 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("操作太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
   const { slug: rawSlug } = await params;
   const slug = decodeURIComponent(rawSlug);
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  const bodyResult = await readWordCardBody(request);
+  if (bodyResult.response) return bodyResult.response;
+  const body = bodyResult.body;
   const action = typeof body.action === "string" ? body.action : "";
 
   if (action === "create") {
@@ -57,6 +76,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   }
 
   return NextResponse.json({ error: "unknown action" }, { status: 400 });
+}
+
+async function readWordCardBody(request: Request) {
+  try {
+    return { body: await readJsonBody<Record<string, unknown>>(request, WORD_CARD_POST_BODY_LIMIT) };
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return { response: NextResponse.json({ error: "请求内容过大。" }, { status: 413 }) };
+    }
+    return { body: {} };
+  }
 }
 
 async function createMnemonicCard(slug: string, body: Record<string, unknown>) {

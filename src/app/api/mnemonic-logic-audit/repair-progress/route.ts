@@ -5,11 +5,21 @@ import { prisma } from "@/lib/db";
 import { saveMnemonicLogicAuditFixedWordIds } from "@/lib/mnemonic-logic-audit-report";
 import { hasRole } from "@/lib/permissions";
 import { repairProgressWorkloadAuditAction } from "@/lib/repository-workload";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
+import { readJsonBody, RequestBodyTooLargeError } from "@/lib/security/request-body";
 
 const maxRepairProgressWords = 10000;
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null);
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:mnemonic-logic-audit:repair-progress", request.headers),
+    limit: 30,
+    windowMs: 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("保存太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
+  const body = await readBody(request);
+  if (body instanceof NextResponse) return body;
   const fixedWordIds = parseWordIds(body, "fixedWordIds");
   const scopedWordIds = parseWordIds(body, "scopedWordIds");
 
@@ -48,6 +58,17 @@ export async function POST(request: Request) {
     },
     { headers: { "Cache-Control": "no-store, max-age=0" } }
   );
+}
+
+async function readBody(request: Request) {
+  try {
+    return await readJsonBody(request, 1024 * 1024);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return NextResponse.json({ error: "审计标记内容过大。" }, { status: 413 });
+    }
+    return null;
+  }
 }
 
 function parseWordIds(body: unknown, key: "fixedWordIds" | "scopedWordIds") {

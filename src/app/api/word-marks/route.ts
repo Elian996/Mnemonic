@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { WordMarkState } from "@prisma/client";
 import { getSessionUser } from "@/lib/auth/session";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
+import { readJsonBody, RequestBodyTooLargeError } from "@/lib/security/request-body";
 import { persistWordMarkStates } from "@/lib/services/word-mark-service";
 
 const validStates = new Set<string>(Object.values(WordMarkState));
@@ -9,7 +11,15 @@ const MAX_CHANGES = 1000;
 type WordMarkChange = [string, WordMarkState | null];
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null);
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:word-marks", request.headers),
+    limit: 180,
+    windowMs: 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("保存太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
+  const body = await readWordMarkBody(request);
+  if (body instanceof NextResponse) return body;
   const changes = parseChanges(body);
   if (!changes.length) {
     return NextResponse.json({ error: "Invalid word mark." }, { status: 400 });
@@ -37,6 +47,17 @@ export async function POST(request: Request) {
     },
     { headers: { "Cache-Control": "no-store, max-age=0" } }
   );
+}
+
+async function readWordMarkBody(request: Request) {
+  try {
+    return await readJsonBody(request, 128 * 1024);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return NextResponse.json({ error: "一次保存的单词标记过多。" }, { status: 413 });
+    }
+    return null;
+  }
 }
 
 function parseChanges(body: unknown): WordMarkChange[] {

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { PrismaClient } from "@prisma/client";
+import { normalizePhonetic } from "../src/lib/phonetics";
 
 type DictionaryEntry = {
   word: string;
@@ -202,11 +203,6 @@ function cleanWord(value: string) {
 
 function cleanText(value: string) {
   return value.replace(/\\n/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function normalizePhonetic(value: string) {
-  const text = value.trim().replace(/^\/|\/$/g, "");
-  return text ? `/${text}/` : "";
 }
 
 function cleanupTranslation(value: string) {

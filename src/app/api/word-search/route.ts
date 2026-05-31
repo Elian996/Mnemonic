@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
 import { compareWordSearchResults } from "@/lib/word-search";
 
 export async function GET(request: Request) {
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:word-search", request.headers),
+    limit: 240,
+    windowMs: 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("搜索太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim().slice(0, 64) ?? "";
   const limitParam = Number(url.searchParams.get("limit") ?? "0");

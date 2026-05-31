@@ -6,6 +6,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { UserRole } from "@prisma/client";
 import { requireApiRole } from "@/lib/api-auth";
+import { checkRateLimit, rateLimitKey, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
 import { createUploadDisplayVariant } from "@/lib/uploads/optimized-images";
 
 export const runtime = "nodejs";
@@ -16,10 +17,26 @@ const REMOTE_IMAGE_TIMEOUT_MS = 10_000;
 const ALLOWED_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 export async function POST(request: Request) {
+  const ipRateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:uploads:image:ip", request.headers),
+    limit: 120,
+    windowMs: 60 * 1000
+  });
+  if (!ipRateLimit.allowed) return rateLimitResponse("上传太频繁，请稍后再试。", ipRateLimit.retryAfterSeconds);
+
   const guard = await requireApiRole(UserRole.USER);
   if (guard.response) return guard.response;
+  const userRateLimit = checkRateLimit({
+    key: rateLimitKey("api:uploads:image:user", guard.user.id),
+    limit: 40,
+    windowMs: 10 * 60 * 1000
+  });
+  if (!userRateLimit.allowed) return rateLimitResponse("上传太频繁，请稍后再试。", userRateLimit.retryAfterSeconds);
 
   try {
+    if (requestBodyTooLarge(request, MAX_IMAGE_BYTES + 1024 * 1024)) {
+      return NextResponse.json({ error: "图片太大，请控制在 12MB 以内。" }, { status: 413 });
+    }
     const formData = await request.formData();
     const file = formData.get("image");
     const imageUrl = String(formData.get("imageUrl") || "").trim();
@@ -45,6 +62,11 @@ export async function POST(request: Request) {
       { status: message.includes("太大") ? 413 : 400 }
     );
   }
+}
+
+function requestBodyTooLarge(request: Request, maxBytes: number) {
+  const contentLength = Number(request.headers.get("content-length") || 0);
+  return Number.isFinite(contentLength) && contentLength > maxBytes;
 }
 
 async function saveImageFromUrl(imageUrl: string) {
@@ -99,14 +121,15 @@ async function saveImageFromUrl(imageUrl: string) {
 
 async function saveImageBytes({ bytes, mimeType, originalName }: { bytes: Buffer; mimeType: string; originalName: string }) {
   const normalizedMime = mimeType.split(";")[0]?.toLowerCase() || "";
-  if (!ALLOWED_MIME_TYPES.has(normalizedMime)) {
+  const detectedMime = detectImageMimeType(bytes);
+  if (!detectedMime || (normalizedMime && (!ALLOWED_MIME_TYPES.has(normalizedMime) || detectedMime !== normalizedMime))) {
     return NextResponse.json({ error: "只能上传 png、jpg、webp 或 gif 图片。" }, { status: 400 });
   }
   if (bytes.byteLength > MAX_IMAGE_BYTES) {
     return NextResponse.json({ error: "图片太大，请控制在 12MB 以内。" }, { status: 413 });
   }
 
-  const extension = extensionFromMime(normalizedMime) ?? extensionFromName(originalName) ?? "png";
+  const extension = extensionFromMime(detectedMime) ?? extensionFromName(originalName) ?? "png";
   const basename = safeFilename(originalName.replace(/\.[^.]+$/, "")) || "pasted-image";
   const filename = `${Date.now()}-${crypto.randomUUID()}-${basename}.${extension}`;
   const uploadDir = path.join(process.cwd(), "public", "uploads", "editor");
@@ -123,6 +146,23 @@ function extensionFromMime(mimeType: string) {
   if (mimeType.includes("webp")) return "webp";
   if (mimeType.includes("gif")) return "gif";
   if (mimeType.includes("png")) return "png";
+  return null;
+}
+
+function detectImageMimeType(bytes: Buffer) {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") {
+    return "image/webp";
+  }
+  if (bytes.length >= 6) {
+    const signature = bytes.subarray(0, 6).toString("ascii");
+    if (signature === "GIF87a" || signature === "GIF89a") return "image/gif";
+  }
   return null;
 }
 

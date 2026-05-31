@@ -8,22 +8,27 @@ export const dynamic = "force-dynamic";
 const uploadRoot = path.join(process.cwd(), "public", "uploads");
 const cacheHeaders = {
   "Cache-Control": "public, max-age=31536000, immutable",
-  "X-Content-Type-Options": "nosniff"
+  "X-Content-Type-Options": "nosniff",
+  "Vary": "Referer"
 };
 
 type UploadRouteContext = {
   params: Promise<{ path: string[] }>;
 };
 
-export async function GET(_request: Request, context: UploadRouteContext) {
-  return serveUpload(context, false);
+export async function GET(request: Request, context: UploadRouteContext) {
+  return serveUpload(request, context, false);
 }
 
-export async function HEAD(_request: Request, context: UploadRouteContext) {
-  return serveUpload(context, true);
+export async function HEAD(request: Request, context: UploadRouteContext) {
+  return serveUpload(request, context, true);
 }
 
-async function serveUpload(context: UploadRouteContext, headOnly: boolean) {
+async function serveUpload(request: Request, context: UploadRouteContext, headOnly: boolean) {
+  if (isBlockedHotlink(request)) {
+    return new NextResponse(null, { status: 403, headers: { "Cache-Control": "private, no-store", "Vary": "Referer" } });
+  }
+
   const { path: pathSegments } = await context.params;
   const filePath = resolveUploadPath(pathSegments);
   if (!filePath) return new NextResponse(null, { status: 404 });
@@ -62,4 +67,40 @@ function contentType(filePath: string) {
   if (extension === ".webp") return "image/webp";
   if (extension === ".gif") return "image/gif";
   return "application/octet-stream";
+}
+
+function isBlockedHotlink(request: Request) {
+  const referer = request.headers.get("referer");
+  if (!referer) return false;
+
+  try {
+    const refererOrigin = new URL(referer).origin;
+    const requestOrigin = new URL(request.url).origin;
+    return refererOrigin !== requestOrigin && !allowedHotlinkOrigins().has(refererOrigin);
+  } catch {
+    return false;
+  }
+}
+
+function allowedHotlinkOrigins() {
+  const origins = new Set<string>();
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (appUrl) {
+    try {
+      origins.add(new URL(appUrl).origin);
+    } catch {
+      // Ignore invalid deployment hints; the request origin still works.
+    }
+  }
+
+  for (const value of (process.env.UPLOAD_HOTLINK_ALLOWED_ORIGINS || "").split(",")) {
+    const origin = value.trim();
+    if (!origin) continue;
+    try {
+      origins.add(new URL(origin).origin);
+    } catch {
+      // Ignore invalid optional origins.
+    }
+  }
+  return origins;
 }

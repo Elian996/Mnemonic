@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import { UserRole } from "@prisma/client";
 import { requireApiRole } from "@/lib/api-auth";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
 import { getWordAutofill } from "@/lib/word-autofill";
 
 export async function GET(request: Request) {
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:word-autofill", request.headers),
+    limit: 60,
+    windowMs: 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("自动填写太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
   const guard = await requireApiRole(UserRole.EDITOR);
   if (guard.response) return guard.response;
 

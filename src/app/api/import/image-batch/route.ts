@@ -4,14 +4,26 @@ import { prisma } from "@/lib/db";
 import { requireApiRole } from "@/lib/api-auth";
 import { extractBatchImageImportPayloads } from "@/lib/import-drafts/image-extraction";
 import { normalizeAgentImportPayload } from "@/lib/import-drafts/normalize";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
 
 export const runtime = "nodejs";
+const MAX_IMPORT_IMAGE_BYTES = 12 * 1024 * 1024;
 
 export async function POST(request: Request) {
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:import:image-batch", request.headers),
+    limit: 20,
+    windowMs: 10 * 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("图片识别太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
   const guard = await requireApiRole(UserRole.ADMIN, { hidden: true });
   if (guard.response) return guard.response;
 
   try {
+    if (requestBodyTooLarge(request, MAX_IMPORT_IMAGE_BYTES + 1024 * 1024)) {
+      return NextResponse.json({ error: "图片太大，请控制在 12MB 以内。" }, { status: 413 });
+    }
     const formData = await request.formData();
     const file = formData.get("image");
     if (!(file instanceof File)) {
@@ -19,6 +31,9 @@ export async function POST(request: Request) {
     }
     if (!file.type.startsWith("image/")) {
       return NextResponse.json({ error: "文件必须是图片" }, { status: 400 });
+    }
+    if (file.size > MAX_IMPORT_IMAGE_BYTES) {
+      return NextResponse.json({ error: "图片太大，请控制在 12MB 以内。" }, { status: 413 });
     }
 
     const imageBytes = Buffer.from(await file.arrayBuffer());
@@ -56,4 +71,9 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+}
+
+function requestBodyTooLarge(request: Request, maxBytes: number) {
+  const contentLength = Number(request.headers.get("content-length") || 0);
+  return Number.isFinite(contentLength) && contentLength > maxBytes;
 }

@@ -3,9 +3,20 @@ import { NextResponse } from "next/server";
 import { WordMarkState } from "@prisma/client";
 import { getSessionUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
+import { readJsonBody, RequestBodyTooLargeError } from "@/lib/security/request-body";
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:word-bookmarks", request.headers),
+    limit: 180,
+    windowMs: 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("保存太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
+  const bodyResult = await readBookmarkBody(request);
+  if (bodyResult.response) return bodyResult.response;
+  const body = bodyResult.body;
   const wordId = typeof body.wordId === "string" ? body.wordId.trim() : "";
   const requestedState = typeof body.bookmarked === "boolean" ? body.bookmarked : null;
 
@@ -62,4 +73,18 @@ export async function POST(request: Request) {
   revalidatePath(`/word/${word.slug}`);
 
   return NextResponse.json({ isBookmarked: markState === WordMarkState.UNKNOWN, markState });
+}
+
+async function readBookmarkBody(request: Request): Promise<
+  | { body: Record<string, unknown>; response?: never }
+  | { body?: never; response: NextResponse }
+> {
+  try {
+    return { body: await readJsonBody<Record<string, unknown>>(request, 16 * 1024) };
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return { response: NextResponse.json({ error: "请求内容过大。" }, { status: 413 }) };
+    }
+    return { body: {} };
+  }
 }

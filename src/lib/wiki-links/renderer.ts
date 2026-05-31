@@ -9,6 +9,10 @@ import { ParsedWikiLink, replaceWikiLinks } from "./parser";
 const window = new JSDOM("").window;
 const purify = DOMPurify(window);
 const mnemonicTokenizer = new Tokenizer();
+const mnemonicSanitizeOptions = {
+  ADD_ATTR: ["data-node-type", "data-target", "src", "alt", "title"],
+  ADD_TAGS: ["img"]
+};
 
 mnemonicTokenizer.del = function parseDoubleTildeDelete(src: string): Tokens.Del | undefined {
   const match = /^~~(?=\S)([\s\S]*?\S)~~(?!~)/.exec(src);
@@ -46,15 +50,12 @@ export async function renderMnemonicMarkdown(markdown: string) {
     gfm: true,
     tokenizer: mnemonicTokenizer
   });
-  const sanitized = purify.sanitize(html, {
-    ADD_ATTR: ["data-node-type", "data-target", "src", "alt", "title"],
-    ADD_TAGS: ["img"]
-  });
+  const sanitized = purify.sanitize(html, mnemonicSanitizeOptions);
   return preferDisplayUploadImages(sanitized);
 }
 
 export async function prepareMnemonicHtmlForDisplay(html: string) {
-  return preferDisplayUploadImages(html);
+  return preferDisplayUploadImages(purify.sanitize(html, mnemonicSanitizeOptions));
 }
 
 export function markdownToPlainText(markdown: string) {

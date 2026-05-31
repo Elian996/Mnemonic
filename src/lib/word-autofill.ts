@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { slugify } from "@/lib/slug";
 import { getAiWordAutofill } from "@/lib/ai-word-autofill";
 import { translateEnglishToChineseOfficial } from "@/lib/official-translation";
+import { normalizePhonetic } from "@/lib/phonetics";
 
 export type WordAutofill = {
   word: string;
@@ -529,12 +530,6 @@ type MerriamWebsterEntry = {
   shortdef?: string[];
   def?: unknown;
 };
-
-function normalizePhonetic(value: string) {
-  const text = value.trim();
-  if (!text) return "";
-  return text.startsWith("/") && text.endsWith("/") ? text : `/${text.replace(/^\/|\/$/g, "")}/`;
-}
 
 function posAbbr(value?: string) {
   const map: Record<string, string> = {

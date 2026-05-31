@@ -8,15 +8,24 @@ import { createSession, destroySession } from "@/lib/auth/session";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { consumeEmailVerificationCode, requestEmailVerificationCode, verificationErrorParam } from "@/lib/auth/email-verification";
 import { registerUrlWithState } from "@/lib/return-path";
+import { clientIdentifierFromHeaders, clientIpFromHeaders } from "@/lib/security/client-ip";
+import { checkRateLimit, rateLimitKey } from "@/lib/security/rate-limit";
 import { emailVerificationRequestSchema, loginSchema, passwordResetSchema, registerSchema } from "@/lib/validators";
 
 export async function loginAction(formData: FormData) {
   const redirectTo = safeRedirectPath(formData.get("next"));
+  const email = normalizeEmail(formData.get("email"));
+  if (!(await checkAuthRateLimit("login:ip", await requestIdentifier(), 30, 5 * 60 * 1000))) {
+    redirect(loginUrl("rate_limited", redirectTo));
+  }
   const parsed = loginSchema.safeParse({
-    email: normalizeEmail(formData.get("email")),
+    email,
     password: formData.get("password")
   });
   if (!parsed.success) redirect(loginUrl("invalid", redirectTo));
+  if (!(await checkAuthRateLimit("login:email", parsed.data.email, 10, 15 * 60 * 1000))) {
+    redirect(loginUrl("rate_limited", redirectTo));
+  }
 
   const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });
   if (!user || !(await verifyPassword(parsed.data.password, user.passwordHash))) {
@@ -38,6 +47,9 @@ export async function registerAction(formData: FormData) {
     verificationCode: normalizeText(formData.get("verificationCode"))
   });
   if (!parsed.success) redirect(registerUrl("invalid", "", redirectTo));
+  if (!(await checkAuthRateLimit("register:ip", await requestIdentifier(), 30, 10 * 60 * 1000))) {
+    redirect(registerUrl("rate_limited", parsed.data.email, redirectTo));
+  }
 
   const existingEmail = await prisma.user.findUnique({
     where: { email: parsed.data.email },
@@ -82,6 +94,13 @@ export async function requestRegisterCodeAction(formData: FormData) {
     email: normalizeEmail(formData.get("email"))
   });
   if (!parsed.success) redirect(registerUrl("invalid_email", "", redirectTo));
+  const identifier = await requestIdentifier();
+  if (
+    !(await checkAuthRateLimit("register-code:ip", identifier, 12, 10 * 60 * 1000)) ||
+    !(await checkAuthRateLimit("register-code:email", parsed.data.email, 5, 60 * 60 * 1000))
+  ) {
+    redirect(registerUrl("rate_limited", parsed.data.email, redirectTo));
+  }
 
   const existingEmail = await prisma.user.findUnique({
     where: { email: parsed.data.email },
@@ -104,6 +123,13 @@ export async function requestPasswordResetCodeAction(formData: FormData) {
     email: normalizeEmail(formData.get("email"))
   });
   if (!parsed.success) redirect("/forgot-password?error=invalid_email");
+  const identifier = await requestIdentifier();
+  if (
+    !(await checkAuthRateLimit("password-reset-code:ip", identifier, 12, 10 * 60 * 1000)) ||
+    !(await checkAuthRateLimit("password-reset-code:email", parsed.data.email, 5, 60 * 60 * 1000))
+  ) {
+    redirect(passwordResetUrl("rate_limited", parsed.data.email));
+  }
 
   const user = await prisma.user.findUnique({
     where: { email: parsed.data.email },
@@ -128,6 +154,9 @@ export async function resetPasswordAction(formData: FormData) {
     password: formData.get("password")
   });
   if (!parsed.success) redirect("/forgot-password?error=invalid");
+  if (!(await checkAuthRateLimit("password-reset:ip", await requestIdentifier(), 30, 10 * 60 * 1000))) {
+    redirect(passwordResetUrl("rate_limited", parsed.data.email));
+  }
 
   const user = await prisma.user.findUnique({
     where: { email: parsed.data.email },
@@ -194,7 +223,7 @@ function safeRedirectPath(value: FormDataEntryValue | null) {
   return path.startsWith("/") && !path.startsWith("//") ? path : "/me";
 }
 
-function loginUrl(error: "invalid" | "suspended", next: string) {
+function loginUrl(error: "invalid" | "suspended" | "rate_limited", next: string) {
   const params = new URLSearchParams({ error });
   if (next !== "/me") params.set("next", next);
   return `/login?${params.toString()}`;
@@ -212,6 +241,18 @@ function passwordResetUrl(error: string, email: string) {
 
 async function requestIp() {
   const headerStore = await headers();
-  const forwardedFor = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwardedFor || headerStore.get("x-real-ip") || undefined;
+  return clientIpFromHeaders(headerStore);
+}
+
+async function requestIdentifier() {
+  const headerStore = await headers();
+  return clientIdentifierFromHeaders(headerStore);
+}
+
+async function checkAuthRateLimit(scope: string, identifier: string, limit: number, windowMs: number) {
+  return checkRateLimit({
+    key: rateLimitKey(`auth:${scope}`, identifier),
+    limit,
+    windowMs
+  }).allowed;
 }

@@ -3,6 +3,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { PrismaClient, WordStatus } from "@prisma/client";
 import { slugify } from "../src/lib/slug";
+import { normalizePhonetic } from "../src/lib/phonetics";
 
 const prisma = new PrismaClient();
 const fileArg = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
@@ -180,11 +181,6 @@ async function flushBatch(
   if (!batch.length) return 0;
   const { count } = await prisma.word.createMany({ data: batch.splice(0, batch.length), skipDuplicates: true });
   return count;
-}
-
-function normalizePhonetic(value: string) {
-  const text = value.trim().replace(/^\/|\/$/g, "");
-  return text ? `/${text}/` : "";
 }
 
 function normalizePos(value: string) {

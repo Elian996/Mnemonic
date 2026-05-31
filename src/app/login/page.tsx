@@ -94,6 +94,7 @@ function safeNextPath(value: string | undefined) {
 function loginErrorMessage(error: string | undefined) {
   if (error === "required") return "请先登录后再继续。";
   if (error === "suspended") return "这个账号已被停用。";
+  if (error === "rate_limited") return "登录尝试太频繁，请稍后再试。";
   if (error === "invalid" || error === "1") return "邮箱或密码不正确。";
   return "";
 }

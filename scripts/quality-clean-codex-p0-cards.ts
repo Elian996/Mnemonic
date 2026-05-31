@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { parseWikiLinks } from "@/lib/wiki-links/parser";
 import { syncEntryWikiLinks } from "@/lib/wiki-links/resolve";
 import { markdownToPlainText, renderMnemonicMarkdown } from "@/lib/wiki-links/renderer";
+import { normalizePhonetic } from "@/lib/phonetics";
 
 const apply = process.argv.includes("--apply");
 const marker = "codex-p0-source-repair-2026-05-15";
@@ -762,12 +763,6 @@ function cleanPhonetic(value: string | null | undefined) {
   const cleaned = raw.replace(/^音标[:：]\s*/u, "").replace(/^\/?|\/?$/gu, "");
   if (!cleaned || /[0-9]/u.test(cleaned)) return "";
   return `/${cleaned}/`;
-}
-
-function normalizePhonetic(value: string) {
-  const text = value.trim();
-  if (!text) return "";
-  return text.startsWith("/") && text.endsWith("/") ? text : `/${text.replace(/^\/|\/$/gu, "")}/`;
 }
 
 function cleanFixedExample(sentence: string | null | undefined, translation: string | null | undefined) {

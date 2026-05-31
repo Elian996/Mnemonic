@@ -4,16 +4,27 @@ import { revalidatePath } from "next/cache";
 import { getSessionUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { canEditMnemonic } from "@/lib/permissions";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
+import { readJsonBody, RequestBodyTooLargeError } from "@/lib/security/request-body";
 
 const noStoreHeaders = { "Cache-Control": "no-store, max-age=0" };
 
 export async function POST(request: Request) {
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:me:mnemonics", request.headers),
+    limit: 90,
+    windowMs: 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("操作太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: "请先登录。" }, { status: 401, headers: noStoreHeaders });
   }
 
-  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  const bodyResult = await readBody(request);
+  if (bodyResult.response) return bodyResult.response;
+  const body = bodyResult.body;
   const action = typeof body.action === "string" ? body.action : "";
 
   try {
@@ -50,6 +61,20 @@ export async function POST(request: Request) {
     },
     { headers: noStoreHeaders }
   );
+}
+
+async function readBody(request: Request): Promise<
+  | { body: Record<string, unknown>; response?: never }
+  | { body?: never; response: NextResponse }
+> {
+  try {
+    return { body: await readJsonBody<Record<string, unknown>>(request, 256 * 1024) };
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return { response: NextResponse.json({ error: "请求内容过大。" }, { status: 413, headers: noStoreHeaders }) };
+    }
+    return { body: {} };
+  }
 }
 
 async function setPublicState(user: Pick<User, "id" | "role">, body: Record<string, unknown>) {

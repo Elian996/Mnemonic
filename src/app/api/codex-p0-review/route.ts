@@ -15,11 +15,23 @@ import {
   updateMnemonicLogicAuditFixedWordIds
 } from "@/lib/mnemonic-logic-audit-report";
 import { hasRole } from "@/lib/permissions";
+import { checkRateLimit, rateLimitResponse, requestRateLimitKey } from "@/lib/security/rate-limit";
+import { readJsonBody, RequestBodyTooLargeError } from "@/lib/security/request-body";
 
 const maxChanges = 1000;
+const bodyLimit = 512 * 1024;
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null);
+  const rateLimit = checkRateLimit({
+    key: requestRateLimitKey("api:codex-p0-review", request.headers),
+    limit: 60,
+    windowMs: 60 * 1000
+  });
+  if (!rateLimit.allowed) return rateLimitResponse("审核操作太频繁，请稍后再试。", rateLimit.retryAfterSeconds);
+
+  const bodyResult = await readBody(request);
+  if (bodyResult.response) return bodyResult.response;
+  const body = bodyResult.body;
   const wordIds = parseWordIds(body);
   const reviewStatus = parseReviewStatus(body);
   const reviewDraft = parseReviewDraft(body);
@@ -112,6 +124,20 @@ export async function POST(request: Request) {
     },
     { headers: { "Cache-Control": "no-store, max-age=0" } }
   );
+}
+
+async function readBody(request: Request): Promise<
+  | { body: unknown; response?: never }
+  | { body?: never; response: NextResponse }
+> {
+  try {
+    return { body: await readJsonBody(request, bodyLimit) };
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return { response: NextResponse.json({ error: "审核内容过大。" }, { status: 413 }) };
+    }
+    return { body: null };
+  }
 }
 
 function parseWordIds(body: unknown) {

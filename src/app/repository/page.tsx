@@ -116,16 +116,26 @@ export default async function RepositoryPage({
   const isAiExtensionReviewScope = scope === "aiExtensionReview" && canUseAiExtensionReview;
   const isAiGeneratedWordCardsScope = scope === "aiGeneratedWordCards" && canUseAiGeneratedWordCards;
   const isSpecialDraftScope = isAiExtensionReviewScope || isAiGeneratedWordCardsScope;
-  const aiExtensionReviewCount = canUseAiExtensionReview ? await getAiExtensionReviewCount() : 0;
-  const aiGeneratedWordCardCount = canUseAiGeneratedWordCards ? await getAiGeneratedWordCardCount() : 0;
-  const labelArtifactCleanupWordIds = canUseAiExtensionReview ? await getLabelArtifactCleanupWordIds() : [];
-  const scannedAiRepairPack002WordIds = canUseAiExtensionReview ? await getScannedAiRepairPack002WordIds() : [];
-  const adminOverview = await getAdminCenterOverview();
-  const wordCardStats = await getWordCardStats();
   const selectedLevelCategory = getRepositoryLevelCategory(params.level);
   const activeLevelSlug = scope === "missingCards" ? (selectedLevelCategory?.slug ?? "") : "";
   const selectedAccountDetail = getAccountDetailMode(params.account);
-  const accountDetails = selectedAccountDetail ? await getAdminAccountDetails(selectedAccountDetail) : null;
+  const [
+    aiExtensionReviewCount,
+    aiGeneratedWordCardCount,
+    labelArtifactCleanupWordIds,
+    scannedAiRepairPack002WordIds,
+    adminOverview,
+    wordCardStats,
+    accountDetails
+  ] = await Promise.all([
+    canUseAiExtensionReview ? getAiExtensionReviewCount() : Promise.resolve(0),
+    canUseAiGeneratedWordCards ? getAiGeneratedWordCardCount() : Promise.resolve(0),
+    canUseAiExtensionReview ? getLabelArtifactCleanupWordIds() : Promise.resolve([]),
+    canUseAiExtensionReview ? getScannedAiRepairPack002WordIds() : Promise.resolve([]),
+    getAdminCenterOverview(),
+    getWordCardStats(),
+    selectedAccountDetail ? getAdminAccountDetails(selectedAccountDetail) : Promise.resolve(null)
+  ]);
 
   const baseWhere = (): Prisma.WordWhereInput => {
     if (scope === "missingCards") {
@@ -164,11 +174,11 @@ export default async function RepositoryPage({
   const totalCount = isAiExtensionReviewScope ? aiExtensionReviewCount : isAiGeneratedWordCardsScope ? aiGeneratedWordCardCount : await prisma.word.count({ where });
   const totalPages = Math.max(1, Math.ceil(totalCount / activePageSize));
   const currentPage = Math.min(requestedPage, totalPages);
-  const aiExtensionReviewItems = canUseAiExtensionReview
-    ? await getAiExtensionReviewItems(aiExtensionReviewPageSize, isAiExtensionReviewScope ? (currentPage - 1) * aiExtensionReviewPageSize : 0)
+  const aiExtensionReviewItems = isAiExtensionReviewScope
+    ? await getAiExtensionReviewItems(aiExtensionReviewPageSize, (currentPage - 1) * aiExtensionReviewPageSize)
     : [];
-  const aiGeneratedWordCardItems = canUseAiGeneratedWordCards
-    ? await getAiGeneratedWordCardItems(aiGeneratedWordCardPageSize, isAiGeneratedWordCardsScope ? (currentPage - 1) * aiGeneratedWordCardPageSize : 0)
+  const aiGeneratedWordCardItems = isAiGeneratedWordCardsScope
+    ? await getAiGeneratedWordCardItems(aiGeneratedWordCardPageSize, (currentPage - 1) * aiGeneratedWordCardPageSize)
     : [];
   const latestUndoableAiExtensionApproval = isAiExtensionReviewScope ? await getLatestUndoableAiExtensionDraftApproval() : null;
   const latestUndoableAiGeneratedWordCardApproval = isAiGeneratedWordCardsScope ? await getLatestUndoableAiGeneratedWordCardApproval() : null;

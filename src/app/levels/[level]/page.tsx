@@ -14,6 +14,12 @@ import { vocabCategories } from "@/lib/vocab-categories";
 import { InteriorContainer, InteriorPage } from "@/components/interior-shell";
 
 const pageSize = 96;
+const wordSeedCacheTtlMs = 60_000;
+
+type LevelWordSeed = { id: string; word: string; slug: string };
+type WordSeedCacheEntry = { expiresAt: number; words: LevelWordSeed[] };
+
+const wordSeedCache = new Map<string, WordSeedCacheEntry>();
 
 type LevelRouteCategory = {
   tag: LevelTag | null;
@@ -58,16 +64,9 @@ export default async function LevelPage({
   }
   const randomSeed = sort === "random" ? providedRandomSeed : "";
   const where: Prisma.WordWhereInput = category.tag ? { levelTags: { has: category.tag } } : {};
-  let allWords: { id: string; word: string; slug: string }[];
+  let allWords: LevelWordSeed[];
   try {
-    allWords = await prisma.word.findMany({
-      where,
-      select: {
-        id: true,
-        word: true,
-        slug: true
-      }
-    });
+    allWords = await getLevelWordSeeds(category, where);
   } catch (error) {
     if (isDatabaseUnavailableError(error)) return <LevelDatabaseUnavailablePage category={category} user={user} />;
     throw error;
@@ -326,6 +325,24 @@ function sortWords<T extends { word: string; slug: string }>(
       return a.word.word.localeCompare(b.word.word, "en");
     })
     .map((item) => item.word);
+}
+
+async function getLevelWordSeeds(category: LevelRouteCategory, where: Prisma.WordWhereInput): Promise<LevelWordSeed[]> {
+  const cacheKey = category.tag ?? "__all__";
+  const cached = wordSeedCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.words;
+
+  const words = await prisma.word.findMany({
+    where,
+    select: {
+      id: true,
+      word: true,
+      slug: true
+    }
+  });
+  wordSeedCache.set(cacheKey, { expiresAt: now + wordSeedCacheTtlMs, words });
+  return words;
 }
 
 function randomRank(value: string) {

@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   LOGIN_REQUIRED_INTERACTION_MESSAGE,
   LoginRequiredPrompt
@@ -12,6 +12,9 @@ import { applyGuestProgressToWord } from "@/lib/guest-progress";
 import { cn } from "@/lib/utils";
 
 type WordNavigationDirection = "previous" | "next";
+
+const sharedWordCardCache = new Map<string, LevelWordItem>();
+const sharedWordCardCacheLimit = 120;
 
 export function WordCardPopupButton({
   slug,
@@ -43,9 +46,25 @@ export function WordCardPopupButton({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [loginPromptMessage, setLoginPromptMessage] = useState("");
-  const wordCache = useRef(new Map<string, LevelWordItem>());
   const showLoginPrompt = (message = LOGIN_REQUIRED_INTERACTION_MESSAGE) => {
     setLoginPromptMessage(message);
+  };
+  const cachePrefix = useMemo(
+    () =>
+      [
+        isAuthenticated ? "auth" : "guest",
+        canEditOfficialCards ? "editor" : "reader",
+        canExportMemoryCardImages ? "exporter" : "viewer"
+      ].join(":"),
+    [canEditOfficialCards, canExportMemoryCardImages, isAuthenticated]
+  );
+  const cacheKeyFor = (nextSlug: string) => `${cachePrefix}:${nextSlug}`;
+  const getCachedWord = (nextSlug: string) => sharedWordCardCache.get(cacheKeyFor(nextSlug));
+  const setCachedWord = (word: LevelWordItem) => {
+    sharedWordCardCache.set(cacheKeyFor(word.slug), word);
+    if (sharedWordCardCache.size <= sharedWordCardCacheLimit) return;
+    const oldestKey = sharedWordCardCache.keys().next().value;
+    if (oldestKey) sharedWordCardCache.delete(oldestKey);
   };
   const navigationSlugList = useMemo(() => {
     if (!navigationSlugs?.length) return [];
@@ -60,7 +79,7 @@ export function WordCardPopupButton({
 
   const openWord = (word: LevelWordItem) => {
     const nextWord = isAuthenticated ? word : applyGuestProgressToWord(word);
-    wordCache.current.set(nextWord.slug, nextWord);
+    setCachedWord(nextWord);
     setActiveCardId(nextWord.id);
     setErrorMessage("");
     setOpenCards((current) =>
@@ -70,7 +89,7 @@ export function WordCardPopupButton({
 
   const updateWord = (updatedWord: LevelWordItem) => {
     const nextWord = isAuthenticated ? updatedWord : applyGuestProgressToWord(updatedWord);
-    wordCache.current.set(nextWord.slug, nextWord);
+    setCachedWord(nextWord);
     setOpenCards((current) =>
       current.map((word) => (word.id === nextWord.id ? { ...word, ...nextWord } : word))
     );
@@ -78,7 +97,7 @@ export function WordCardPopupButton({
 
   const replaceActiveWord = (currentWordId: string, word: LevelWordItem) => {
     const nextWord = isAuthenticated ? word : applyGuestProgressToWord(word);
-    wordCache.current.set(nextWord.slug, nextWord);
+    setCachedWord(nextWord);
     setActiveCardId(nextWord.id);
     setErrorMessage("");
     setOpenCards((current) =>
@@ -105,7 +124,7 @@ export function WordCardPopupButton({
   };
 
   const openWordBySlug = async (nextSlug: string) => {
-    const cachedWord = wordCache.current.get(nextSlug);
+    const cachedWord = getCachedWord(nextSlug);
     if (cachedWord) {
       openWord(cachedWord);
       void refreshWordBySlug(nextSlug, false, false);
@@ -137,7 +156,7 @@ export function WordCardPopupButton({
     const nextSlug = navigationSlugList[nextIndex];
     if (!nextSlug || nextSlug === word.slug) return false;
 
-    const cachedWord = wordCache.current.get(nextSlug);
+    const cachedWord = getCachedWord(nextSlug);
     if (cachedWord) {
       replaceActiveWord(word.id, cachedWord);
       void refreshWordBySlug(nextSlug, false, false);

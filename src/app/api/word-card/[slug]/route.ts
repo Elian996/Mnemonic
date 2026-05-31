@@ -796,7 +796,7 @@ async function toWordCardPayload(word: WordCardRecord, user: Pick<User, "id" | "
       title: entry.title,
       splitText: entry.splitText || "",
       contentMarkdown: entry.contentMarkdown,
-      contentHtml: await renderMnemonicMarkdown(entry.contentMarkdown),
+      contentHtml: entry.contentHtml || (await renderMnemonicMarkdown(entry.contentMarkdown)),
       plainText: entry.plainText,
       sourceType: entry.sourceType,
       status: entry.status,

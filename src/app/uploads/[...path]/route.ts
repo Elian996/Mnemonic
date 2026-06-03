@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { isBlockedHotlink } from "@/lib/uploads/hotlink";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,40 +68,4 @@ function contentType(filePath: string) {
   if (extension === ".webp") return "image/webp";
   if (extension === ".gif") return "image/gif";
   return "application/octet-stream";
-}
-
-function isBlockedHotlink(request: Request) {
-  const referer = request.headers.get("referer");
-  if (!referer) return false;
-
-  try {
-    const refererOrigin = new URL(referer).origin;
-    const requestOrigin = new URL(request.url).origin;
-    return refererOrigin !== requestOrigin && !allowedHotlinkOrigins().has(refererOrigin);
-  } catch {
-    return false;
-  }
-}
-
-function allowedHotlinkOrigins() {
-  const origins = new Set<string>();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (appUrl) {
-    try {
-      origins.add(new URL(appUrl).origin);
-    } catch {
-      // Ignore invalid deployment hints; the request origin still works.
-    }
-  }
-
-  for (const value of (process.env.UPLOAD_HOTLINK_ALLOWED_ORIGINS || "").split(",")) {
-    const origin = value.trim();
-    if (!origin) continue;
-    try {
-      origins.add(new URL(origin).origin);
-    } catch {
-      // Ignore invalid optional origins.
-    }
-  }
-  return origins;
 }

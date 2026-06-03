@@ -891,6 +891,7 @@ Important production gotchas:
 - When the user is looking at the public server or says the app is server-backed / synchronized across devices, local code edits and local builds are not enough. Deploy the scoped change to `/home/ubuntu/Mnemonic`, rebuild, restart `mnemonic.service`, and verify the server-rendered result before saying the UI is fixed.
 - Official mnemonic cards can only be edited by `EDITOR` or `ADMIN`; normal users can create and edit their own cards.
 - Uploaded images in mnemonic cards are file assets under `public/uploads/`; database restore alone is not enough to display them.
+- 2026-06-03 uploaded-image lesson: OpenAI/GPT Image output should be treated as ephemeral API output, not a durable display URL. The app must save generated or pasted image bytes into `public/uploads/...` and store/render stable `/uploads/...` paths. When a production card shows a broken image, do not stop at checking `/api/word-card/<word>` or opening the image URL with no headers; reproduce the browser request with the page's `Referer` and verify same-origin `Referer` returns `200` while unrelated external `Referer` returns `403`. For `/public`-backed uploads, route handlers alone may be bypassed by Next static-file serving, so any hotlink/security policy for `/uploads/:path*` belongs in middleware as well as route-level defense.
 
 Common commands:
 

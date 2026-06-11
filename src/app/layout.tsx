@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import "./globals.css";
 import { DeviceModeProvider } from "@/components/device-mode-provider";
 import { GuestProgressSync } from "@/components/guest-progress-sync";
+import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { getSessionUser } from "@/lib/auth/session";
 
@@ -39,6 +40,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             accountLabel={user?.displayName || user?.username || ""}
           />
           {children}
+          <SiteFooter />
         </DeviceModeProvider>
       </body>
     </html>
